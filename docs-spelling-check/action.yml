@@ -16,11 +16,7 @@ runs:
   using: "composite"
   steps:
     # Also set `fetch-depth: 0` on the source repo so the action can compare the current head against the base branch.
-    - name: Checkout tools repo
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      with:
-        repository: Consensys-Incorporated/github-actions
-        path: .github-actions
+    # Vale uses this commit's config. It does not check out main, so a pilot branch stays off the shared config.
 
     # v47.0.5
     - uses: tj-actions/changed-files@22103cc46bda19c2b464ffe86db46df6922fd323 # 47.0.5
@@ -42,13 +38,24 @@ runs:
       with:
         python-version: '3.12'
 
-    # d89dee975228ae261d22c15adcd03578634d429c = v2.1.1 
+    - name: Add the repository word list
+      if: steps.changed-files.outputs.any_changed == 'true'
+      shell: bash
+      run: |
+        dest="${{ github.action_path }}/styles/config/vocabularies/Repo"
+        mkdir -p "$dest"
+        src="${GITHUB_WORKSPACE}/.github/vale/accept.txt"
+        if [ -f "$src" ]; then
+          cp "$src" "$dest/accept.txt"
+        fi
+
+    # d89dee975228ae261d22c15adcd03578634d429c = v2.1.1
     - name: Vale
       if: steps.changed-files.outputs.any_changed == 'true'
       uses: errata-ai/vale-action@d89dee975228ae261d22c15adcd03578634d429c
       with:
         files: ${{ steps.changed-files.outputs.all_changed_files }}
-        vale_flags: "--config .github-actions/docs-spelling-check/.vale.ini"
+        vale_flags: "--config ${{ github.action_path }}/.vale.ini"
         # fail_on_error: true
         reporter: github-pr-check
         separator: ","

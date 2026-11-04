@@ -1,0 +1,1 @@
+# Replaced at run time when the calling repository has .github/vale/accept.txt.
