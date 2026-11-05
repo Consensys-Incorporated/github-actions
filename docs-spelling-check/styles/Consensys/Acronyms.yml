@@ -25,6 +25,7 @@ exceptions:
   - DVF
   - ECDSA
   - EIP
+  - EOA
   - ETH
   - EVM
   - ES
@@ -58,6 +59,7 @@ exceptions:
   - PKCS
   - PoA
   - POS
+  - QBFT
   - POST
   - PostgreSQL
   - POW

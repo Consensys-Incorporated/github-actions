@@ -16,6 +16,7 @@ runs:
   using: "composite"
   steps:
     # Also set `fetch-depth: 0` on the source repo so the action can compare the current head against the base branch.
+    # Vale reads the default branch. A shared-list edit on main applies without moving the pin.
     - name: Checkout tools repo
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
@@ -42,10 +43,21 @@ runs:
       with:
         python-version: '3.12'
 
-    # d89dee975228ae261d22c15adcd03578634d429c = v2.1.1 
+    - name: Add the repository word list
+      if: steps.changed-files.outputs.any_changed == 'true'
+      shell: bash
+      run: |
+        dest=".github-actions/docs-spelling-check/styles/config/vocabularies/Repo"
+        mkdir -p "$dest"
+        src="${GITHUB_WORKSPACE}/.github/vale/accept.txt"
+        if [ -f "$src" ]; then
+          cp "$src" "$dest/accept.txt"
+        fi
+
+    # d89dee975228ae261d22c15adcd03578634d429c = vale-cli/vale-action v2.1.1
     - name: Vale
       if: steps.changed-files.outputs.any_changed == 'true'
-      uses: errata-ai/vale-action@d89dee975228ae261d22c15adcd03578634d429c
+      uses: vale-cli/vale-action@d89dee975228ae261d22c15adcd03578634d429c
       with:
         files: ${{ steps.changed-files.outputs.all_changed_files }}
         vale_flags: "--config .github-actions/docs-spelling-check/.vale.ini"

@@ -46,6 +46,8 @@ Vale is highly customizable and the boilerplate styles may not be what you need.
 3. [reject](./styles/config/vocabularies/Consensys-common/reject.txt)
    > [accept and reject use regex](https://vale.sh/docs/topics/vocab/) there is no need to create the reject case for each accept nor vice versa.
 
+This branch copies a repository's `.github/vale/accept.txt` into the `Repo` vocabulary before Vale runs. Add a newly flagged term to that file in the pull request that introduces it. The shared accept list already contains the terms promoted from the initial spelling audit. The action does not add terms on its own.
+
 > For help with Regex expression building use [Regex101](https://regex101.com).
 
 Finally, there are more nuanced Consensys-specific styles such as substitutions, acronym overrides, and other configurations in the [Consensys Style folder](./styles/Consensys).

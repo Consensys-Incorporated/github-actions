@@ -1,5 +1,5 @@
 extends: spelling
-message: "Did you really mean '%s'? Ignore this alert if this is a false positive, or ask Cursor to add the term to the Vale dictionary."
+message: "Did you really mean '%s'? If this term is specific to this site, add it to .github/vale/accept.txt in this pull request."
 level: warning
 ignore:
   - config/ignore/Consensys-common/project-words.txt
