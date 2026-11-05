@@ -376,6 +376,7 @@ transaction_details
 Trivy
 [tT]ruststore[s]?
 [Tt]xns?
+TypeScript
 UAs
 uncached
 Undecodable
