@@ -8,6 +8,12 @@ inputs:
     description: 'default config file.'
     required: false
     default: .github-actions/docs-link-check/config/.linkspector.yml
+  CHANGED_FILES_ONLY:
+    description: >-
+      Set to true on pull_request events to check only the Markdown files the pull request changes
+      within the config's dirs. Skips the check when none change.
+    required: false
+    default: 'false'
 runs:
   using: "composite"
   steps:
@@ -17,13 +23,138 @@ runs:
         repository: Consensys-Incorporated/github-actions
         path: .github-actions
 
+    - name: Limit the check to the pull request diff
+      id: scope
+      shell: bash
+      env:
+        CHANGED_FILES_ONLY: ${{ inputs.CHANGED_FILES_ONLY }}
+        CONFIG_FILE: ${{ inputs.CONFIG_FILE }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        set -euo pipefail
+        if [ "$CHANGED_FILES_ONLY" != "true" ]; then
+          echo "config=$CONFIG_FILE" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -z "$BASE_REF" ]; then
+          echo "::error::CHANGED_FILES_ONLY needs a pull_request event."
+          exit 1
+        fi
+        # The diff needs the merge base, so fetch the history a shallow checkout leaves out.
+        refspec="+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --no-tags --unshallow origin "$refspec"
+        else
+          git fetch --no-tags origin "$refspec"
+        fi
+        git diff --name-only --diff-filter=ACMR "origin/$BASE_REF...HEAD" -- '*.md' '*.mdx' > "$RUNNER_TEMP/changed-docs.txt"
+        status=0
+        # Write a config that checks only the changed files under the config's dirs and outside its
+        # excludedDirs. It replaces dirs with files and keeps every other setting. Exits 2 when no file is in scope.
+        python3 - "$RUNNER_TEMP/changed-docs.txt" "$CONFIG_FILE" .linkspector-pr.yml << 'PY' || status=$?
+        import pathlib
+        import sys
+
+        changed_path, source_path, output_path = sys.argv[1:4]
+
+        changed = [line.strip() for line in pathlib.Path(changed_path).read_text().splitlines() if line.strip()]
+        source = pathlib.Path(source_path).read_text().splitlines()
+
+
+        def section(name):
+            values = []
+            index = 0
+            while index < len(source):
+                if source[index].startswith(name + ":"):
+                    index += 1
+                    while index < len(source) and source[index].startswith((" ", "\t")):
+                        item = source[index].strip()
+                        if item.startswith("- "):
+                            values.append(item[2:].strip().strip("'\""))
+                        index += 1
+                    break
+                index += 1
+            return values
+
+
+        def norm(path):
+            path = path.replace("\\", "/").strip()
+            while path.startswith("./"):
+                path = path[2:]
+            path = path.rstrip("/")
+            if path == ".":
+                return ""
+            return path
+
+
+        def under(path, root):
+            # An empty root is "." or "./": the whole repository.
+            if root == "":
+                return True
+            return path == root or path.startswith(root + "/")
+
+
+        roots = [norm(path) for path in section("dirs")]
+        if not roots:
+            sys.exit("The linkspector config has no dirs, so the pull request check has no scope.")
+        excluded = [norm(path) for path in section("excludedDirs")]
+
+
+        def included(path):
+            path = norm(path)
+            if not any(under(path, root) for root in roots):
+                return False
+            return not any(under(path, root) for root in excluded)
+
+
+        changed = [path for path in changed if included(path)]
+        if not changed:
+            sys.exit(2)
+
+        kept = []
+        index = 0
+        while index < len(source):
+            line = source[index]
+            if line.startswith("dirs:"):
+                index += 1
+                while index < len(source) and source[index].startswith((" ", "\t")):
+                    index += 1
+                continue
+            kept.append(line)
+            index += 1
+
+
+        def quote(path):
+            return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+        files = ["files:"] + [f"  - {quote(path)}" for path in changed]
+        pathlib.Path(output_path).write_text("\n".join(files + kept) + "\n")
+        PY
+        case "$status" in
+          0)
+            echo "config=.linkspector-pr.yml" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            ;;
+          2)
+            echo "No changed Markdown files in scope, so skipping the link check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            exit "$status"
+            ;;
+        esac
+
     - name: Use Node.js 
+      if: steps.scope.outputs.skip != 'true'
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         node-version: 20
 
     # Fix Chrome sandbox issues on Ubuntu 24.04
     - name: Setup Chrome Linux Sandbox
+      if: steps.scope.outputs.skip != 'true'
       shell: bash    
       run: |
         # Based on https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
@@ -35,16 +166,20 @@ runs:
         fi
 
     - name: Install linkspector
+      if: steps.scope.outputs.skip != 'true'
       shell: bash
       run: |
         npm install -g @umbrelladocs/linkspector@0.4.7
     
     # Run linkspector and fail if there are broken links
     - name: Run linkspector
+      if: steps.scope.outputs.skip != 'true'
       shell: bash    
+      env:
+        CONFIG_FILE: ${{ steps.scope.outputs.config }}
       run: |
         set -eo pipefail
         linkspector --version
         echo "🔍 Checking for broken links..."
-        linkspector check -c ${{ inputs.CONFIG_FILE }}
+        linkspector check -c "$CONFIG_FILE"
         
