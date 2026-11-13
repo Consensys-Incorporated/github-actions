@@ -1,0 +1,12 @@
+# Outdated names. Quoted uses are skipped so historical explanations such as
+# previously called "Ethereum 2.0" still pass.
+extends: substitution
+message: Use '%s' instead of '%s'. Quoted historical names are skipped; otherwise, wrap the line in Vale off and on comments.
+ignorecase: false
+level: warning
+# Accepted vocabulary such as "Ethereum" would otherwise suppress these multi-word matches.
+vocab: false
+action:
+  name: replace
+swap:
+  '(?<!["“])Ethereum 2\.0': "consensus layer"
