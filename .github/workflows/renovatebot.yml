@@ -2,7 +2,7 @@ name: renovatebot
 
 on:
   schedule:
-    - cron: "15 3 14,28 * *"
+    - cron: "15 3 * * 1"
 
   push:
     branches:
@@ -17,13 +17,12 @@ permissions:
 jobs:
   renovatebot-check:
     runs-on: ubuntu-24.04
-    environment: security
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Run renovatebot
-        uses: Consensys-Incorporated/github-actions/renovatebot@264745c22708ce547d5c6978cccbcb6101d8331b # main
+        uses: Consensys-Incorporated/github-actions/renovatebot@89c262a30cae735be99dc776f9556b796fb456ca # 1.0.0
         with:
-          GH_APP_ID: ${{ secrets.GH_APP_ID }}
-          GH_PRIVATE_KEY: ${{ secrets.GH_PRIVATE_KEY }}
+          GH_APP_ID: ${{ secrets.RENOVATE_APP_ID }}
+          GH_PRIVATE_KEY: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           GH_REPOSITORY: ${{ github.repository }}
