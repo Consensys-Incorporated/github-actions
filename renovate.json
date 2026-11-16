@@ -8,7 +8,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["action\\.yml$"],
+      "managerFilePatterns": ["/action\\.yml$/"],
       "matchStrings": [
         "npm install -g @umbrelladocs/linkspector@(?<currentValue>[^\\s\\n]+)"
       ],
