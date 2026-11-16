@@ -10,8 +10,10 @@
 # The job runs in the calling repository, in the environment named by the
 # `environment` input (default `security`). Each calling repository stores the
 # incoming webhook for its own channel as a SLACK_WEBHOOK secret in that
-# environment; nothing about Slack is stored here. Without the secret the
-# notification is skipped.
+# environment; nothing about Slack is stored here. The caller must also pass
+# SLACK_WEBHOOK by name: setting the environment only selects which value the
+# job receives, and a secret the caller doesn't pass resolves to an empty
+# string. Without the secret the notification is skipped.
 #
 # Call it on push to the default branch and on a daily schedule: the Security
 # tab shows default-branch results, and new CVEs land on unchanged code.
@@ -44,6 +46,8 @@
 #       uses: Consensys-Incorporated/github-actions/.github/workflows/trivy.yml@<sha> # <version>
 #       with:
 #         environment: security
+#       secrets:
+#         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
 name: trivy
 
@@ -70,6 +74,10 @@ on:
         description: "Environment in the calling repository that holds the SLACK_WEBHOOK secret"
         type: string
         default: 'security'
+    secrets:
+      SLACK_WEBHOOK:
+        description: 'Incoming webhook notified when a scheduled scan fails; the value comes from the environment input'
+        required: false
 
 permissions: {}
 
@@ -77,8 +85,8 @@ jobs:
   trivy:
     name: Trivy
     runs-on: ${{ inputs.runs-on }}
-    # workflow_call cannot pass environment secrets, so the job reads
-    # SLACK_WEBHOOK from this environment in the calling repository.
+    # The job receives the value of SLACK_WEBHOOK from this environment in the
+    # calling repository; the caller still has to pass the secret by name.
     environment: ${{ inputs.environment }}
     permissions:
       actions: read # upload-sarif needs it on private repositories
