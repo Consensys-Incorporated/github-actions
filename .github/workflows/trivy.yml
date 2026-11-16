@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+# Reusable workflow: scan the repository with Trivy and upload the results to
+# the Security tab (code scanning, category "trivy").
+#
+# Pull requests only upload, so GitHub annotates the alerts the pull request
+# introduces. Every other event also fails the run when a finding at
+# `severity` remains, and a scheduled run then posts to Slack if a webhook is
+# passed. Call it on push to the default branch and on a daily schedule: the
+# Security tab shows default-branch results, and new CVEs land on unchanged
+# code.
+#
+# The trivy-action restores and saves the vulnerability DB in the Actions
+# cache itself, and the scheduled run on the default branch refreshes it for
+# every branch, so no separate cache workflow is needed.
+#
+# Findings are suppressed with a `.trivyignore` at the repository root.
+#
+# Caller:
+#
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#       branches: [main]
+#     schedule:
+#       - cron: "23 4 * * *"
+#     workflow_dispatch:
+#
+#   permissions: {}
+#
+#   jobs:
+#     trivy:
+#       permissions:
+#         actions: read
+#         contents: read
+#         security-events: write
+#       uses: Consensys-Incorporated/github-actions/.github/workflows/trivy.yml@<sha> # <version>
+#       secrets:
+#         SLACK_WEBHOOK: ${{ secrets.SECURITY_SLACK_WEBHOOK }}
+
+name: trivy
+
+on:
+  workflow_call:
+    inputs:
+      scan-ref:
+        description: 'Path to scan, relative to the repository root'
+        type: string
+        default: '.'
+      scanners:
+        description: 'Comma-separated Trivy scanners'
+        type: string
+        default: 'vuln,secret,misconfig'
+      severity:
+        description: 'Comma-separated severities to report and fail on'
+        type: string
+        default: 'HIGH,CRITICAL'
+      runs-on:
+        description: 'Runner label'
+        type: string
+        default: 'ubuntu-24.04'
+    secrets:
+      SLACK_WEBHOOK:
+        description: 'Incoming webhook notified when a scheduled scan fails'
+        required: false
+
+permissions: {}
+
+jobs:
+  trivy:
+    name: Trivy
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      actions: read # upload-sarif needs it on private repositories
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # 0.35.0, also uses aquasecurity/setup-trivy@v0.2.4 and actions/cache
+      # The cache lives outside the workspace so the fs scan does not walk it.
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          scan-type: 'fs'
+          scan-ref: ${{ inputs.scan-ref }}
+          scanners: ${{ inputs.scanners }}
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+          format: 'sarif'
+          output: ${{ runner.temp }}/trivy-results.sarif
+          limit-severities-for-sarif: true
+          cache-dir: ${{ runner.temp }}/.cache/trivy
+
+      # Pull requests from forks get a read-only token and cannot upload.
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        with:
+          sarif_file: ${{ runner.temp }}/trivy-results.sarif
+          category: trivy
+
+      - name: Check findings
+        shell: bash
+        env:
+          SARIF: ${{ runner.temp }}/trivy-results.sarif
+          SEVERITY: ${{ inputs.severity }}
+          ENFORCE: ${{ github.event_name != 'pull_request' }}
+          ALERTS_URL: ${{ github.server_url }}/${{ github.repository }}/security/code-scanning?query=tool%3ATrivy+is%3Aopen
+        run: |
+          count=$(jq '[.runs[].results[]?] | length' "$SARIF")
+          {
+            echo "## Trivy: ${count} finding(s) at ${SEVERITY}"
+            echo
+            echo "[Open Trivy alerts](${ALERTS_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$count" -gt 0 ] && [ "$ENFORCE" = "true" ]; then
+            echo "::error::Trivy found ${count} finding(s) at ${SEVERITY}: ${ALERTS_URL}"
+            exit 1
+          fi
+
+      - name: Notify Slack
+        if: failure() && github.event_name == 'schedule'
+        shell: bash
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          TEXT: >-
+            :rotating_light: Trivy scheduled scan failed for ${{ github.repository }}:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK" ]; then
+            echo "No SLACK_WEBHOOK passed; skipping notification."
+            exit 0
+          fi
+          jq -n --arg text "$TEXT" '{text: $text}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK"
