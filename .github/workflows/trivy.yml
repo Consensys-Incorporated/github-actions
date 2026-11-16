@@ -5,10 +5,16 @@
 #
 # Pull requests only upload, so GitHub annotates the alerts the pull request
 # introduces. Every other event also fails the run when a finding at
-# `severity` remains, and a scheduled run then posts to Slack if a webhook is
-# passed. Call it on push to the default branch and on a daily schedule: the
-# Security tab shows default-branch results, and new CVEs land on unchanged
-# code.
+# `severity` remains, and a scheduled run then posts to Slack.
+#
+# The job runs in the calling repository, in the environment named by the
+# `environment` input (default `security`). Each calling repository stores the
+# incoming webhook for its own channel as a SLACK_WEBHOOK secret in that
+# environment; nothing about Slack is stored here. Without the secret the
+# notification is skipped.
+#
+# Call it on push to the default branch and on a daily schedule: the Security
+# tab shows default-branch results, and new CVEs land on unchanged code.
 #
 # The trivy-action restores and saves the vulnerability DB in the Actions
 # cache itself, and the scheduled run on the default branch refreshes it for
@@ -36,8 +42,8 @@
 #         contents: read
 #         security-events: write
 #       uses: Consensys-Incorporated/github-actions/.github/workflows/trivy.yml@<sha> # <version>
-#       secrets:
-#         SLACK_WEBHOOK: ${{ secrets.SECURITY_SLACK_WEBHOOK }}
+#       with:
+#         environment: security
 
 name: trivy
 
@@ -60,10 +66,10 @@ on:
         description: 'Runner label'
         type: string
         default: 'ubuntu-24.04'
-    secrets:
-      SLACK_WEBHOOK:
-        description: 'Incoming webhook notified when a scheduled scan fails'
-        required: false
+      environment:
+        description: "Environment in the calling repository that holds the SLACK_WEBHOOK secret"
+        type: string
+        default: 'security'
 
 permissions: {}
 
@@ -71,6 +77,9 @@ jobs:
   trivy:
     name: Trivy
     runs-on: ${{ inputs.runs-on }}
+    # workflow_call cannot pass environment secrets, so the job reads
+    # SLACK_WEBHOOK from this environment in the calling repository.
+    environment: ${{ inputs.environment }}
     permissions:
       actions: read # upload-sarif needs it on private repositories
       contents: read
@@ -81,10 +90,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # 0.35.0, also uses aquasecurity/setup-trivy@v0.2.4 and actions/cache
+      # v0.36.0, also uses aquasecurity/setup-trivy@v0.2.6 and actions/cache@v5 (Node 24)
       # The cache lives outside the workspace so the fs scan does not walk it.
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: 'fs'
           scan-ref: ${{ inputs.scan-ref }}
@@ -130,12 +139,13 @@ jobs:
         shell: bash
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          ENVIRONMENT: ${{ inputs.environment }}
           TEXT: >-
             :rotating_light: Trivy scheduled scan failed for ${{ github.repository }}:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$SLACK_WEBHOOK" ]; then
-            echo "No SLACK_WEBHOOK passed; skipping notification."
+            echo "No SLACK_WEBHOOK in the ${ENVIRONMENT} environment; skipping notification."
             exit 0
           fi
           jq -n --arg text "$TEXT" '{text: $text}' \
