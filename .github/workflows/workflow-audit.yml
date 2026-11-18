@@ -1,0 +1,176 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+# Reusable workflow: check that every `uses:` in the calling repository's
+# workflows and actions points at a real, released commit, and fail the run
+# when one does not.
+#
+# It runs zizmor (https://docs.zizmor.sh/) with only these audits:
+#   - impostor-commit: the pinned SHA exists only in a fork. GitHub resolves a
+#     fork's commits through the parent's name, so
+#     `owner/repo@<sha from a fork>` looks like an ordinary pinned action.
+#   - unpinned-uses: an action is used by tag or branch instead of a full SHA.
+#   - ref-confusion: a tag or branch name that exists as both.
+#   - ref-version-mismatch: the version comment (`# 2.0.1`) does not match the
+#     pinned SHA.
+# Every other zizmor audit is disabled here; the MetaMask Security Code
+# Scanner runs the full set and reports to the Security tab without blocking.
+#
+# zizmor queries the GitHub API with the job's token, so it needs only
+# `contents: read` and works on pull requests from forks. It can only check
+# actions that token can read: public repositories and the caller's own.
+#
+# Make the job a required check. The check name is `<caller job id> / zizmor`,
+# for example `workflow-audit / zizmor`. Do not filter the caller by `paths`:
+# a required check that never starts blocks the pull request.
+#
+# Set `report-only: true` while rolling out: findings are still listed in the
+# run and annotated on the pull request, but the check passes.
+#
+# Caller:
+#
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
+#       branches: [main]
+#     workflow_dispatch:
+#
+#   permissions: {}
+#
+#   jobs:
+#     workflow-audit:
+#       permissions:
+#         contents: read
+#       uses: Consensys-Incorporated/github-actions/.github/workflows/workflow-audit.yml@<sha> # <version>
+#       with:
+#         report-only: true
+
+name: workflow-audit
+
+on:
+  workflow_call:
+    inputs:
+      report-only:
+        description: 'List findings without failing the check'
+        type: boolean
+        default: false
+      runs-on:
+        description: 'Runner label'
+        type: string
+        default: 'ubuntu-24.04'
+
+permissions: {}
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ${{ inputs.runs-on }}
+    continue-on-error: ${{ inputs.report-only }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Outside the workspace, so a zizmor.yml in the calling repository can't
+      # turn these audits off. zizmor is pinned below, so this list only needs
+      # revisiting when that version changes: an audit added in a later
+      # version is on until it is listed here.
+      - name: Write zizmor configuration
+        shell: bash
+        env:
+          CONFIG: ${{ runner.temp }}/zizmor.yml
+        run: |
+          cat > "$CONFIG" <<'EOF'
+          rules:
+            adhoc-packages:
+              disable: true
+            anonymous-definition:
+              disable: true
+            archived-uses:
+              disable: true
+            artipacked:
+              disable: true
+            bot-conditions:
+              disable: true
+            cache-poisoning:
+              disable: true
+            concurrency-limits:
+              disable: true
+            dangerous-triggers:
+              disable: true
+            dangerous-checkout:
+              disable: true
+            dependabot-cooldown:
+              disable: true
+            dependabot-execution:
+              disable: true
+            excessive-permissions:
+              disable: true
+            forbidden-uses:
+              disable: true
+            github-app:
+              disable: true
+            github-env:
+              disable: true
+            hardcoded-container-credentials:
+              disable: true
+            insecure-commands:
+              disable: true
+            insecure-url-scheme:
+              disable: true
+            known-vulnerable-actions:
+              disable: true
+            misfeature:
+              disable: true
+            obfuscation:
+              disable: true
+            overprovisioned-secrets:
+              disable: true
+            secrets-inherit:
+              disable: true
+            secrets-outside-env:
+              disable: true
+            self-hosted-runner:
+              disable: true
+            self-repository:
+              disable: true
+            stale-action-refs:
+              disable: true
+            superfluous-actions:
+              disable: true
+            template-injection:
+              disable: true
+            typosquat-uses:
+              disable: true
+            undocumented-permissions:
+              disable: true
+            unpinned-images:
+              disable: true
+            unpinned-tools:
+              disable: true
+            unredacted-secrets:
+              disable: true
+            unsound-condition:
+              disable: true
+            unsound-contains:
+              disable: true
+            unsound-ternary:
+              disable: true
+            use-trusted-publishing:
+              disable: true
+          EOF
+
+      # zizmor-action v0.8.1 installs zizmor from a wheel verified by hash.
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: '1.32.0'
+          inputs: .
+          online-audits: true
+          persona: regular
+          advanced-security: false
+          annotations: true
+          config: ${{ runner.temp }}/zizmor.yml

@@ -1,0 +1,21 @@
+# Runs workflow-audit.yml on this repository's own workflows and actions.
+name: workflow-audit
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  workflow-audit:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/workflow-audit.yml
+    with:
+      report-only: true
