@@ -24,7 +24,7 @@
 # a required check that never starts blocks the pull request.
 #
 # Set `report-only: true` while rolling out: findings are still listed in the
-# run and annotated on the pull request, but the check passes.
+# run and annotated on the pull request, but the check passes (green).
 #
 # Caller:
 #
@@ -65,7 +65,6 @@ jobs:
   zizmor:
     name: zizmor
     runs-on: ${{ inputs.runs-on }}
-    continue-on-error: ${{ inputs.report-only }}
     permissions:
       contents: read
     steps:
@@ -164,7 +163,10 @@ jobs:
           EOF
 
       # zizmor-action v0.8.1 installs zizmor from a wheel verified by hash.
+      # report-only is set on the step, not the job: on the job, the run
+      # succeeds but the job's check still shows as failed on the pull request.
       - name: Run zizmor
+        continue-on-error: ${{ inputs.report-only }}
         uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           version: '1.32.0'
