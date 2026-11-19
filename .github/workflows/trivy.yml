@@ -15,12 +15,12 @@
 # job receives, and a secret the caller doesn't pass resolves to an empty
 # string. Without the secret the notification is skipped.
 #
-# Call it on push to the default branch and on a daily schedule: the Security
+# Call it on push to the default branch and on a weekly schedule: the Security
 # tab shows default-branch results, and new CVEs land on unchanged code.
 #
 # The trivy-action restores and saves the vulnerability DB in the Actions
-# cache itself, and the scheduled run on the default branch refreshes it for
-# every branch, so no separate cache workflow is needed.
+# cache itself, and runs on the default branch refresh it for every branch, so
+# no separate cache workflow is needed.
 #
 # Findings are suppressed with a `.trivyignore` at the repository root.
 #
@@ -32,7 +32,7 @@
 #     pull_request:
 #       branches: [main]
 #     schedule:
-#       - cron: "23 4 * * *"
+#       - cron: "23 4 * * 1"
 #     workflow_dispatch:
 #
 #   permissions: {}
