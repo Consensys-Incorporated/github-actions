@@ -163,10 +163,13 @@ jobs:
           EOF
 
       # zizmor-action v0.8.1 installs zizmor from a wheel verified by hash.
-      # report-only is set on the step, not the job: on the job, the run
-      # succeeds but the job's check still shows as failed on the pull request.
+      # The scan always continues on error and the next step decides the
+      # result. continue-on-error is only evaluated once the step fails, and
+      # `inputs` is empty at that point, so it can't read report-only. On the
+      # job, it leaves the pull request check failed even when the run succeeds.
       - name: Run zizmor
-        continue-on-error: ${{ inputs.report-only }}
+        id: zizmor
+        continue-on-error: true
         uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           version: '1.32.0'
@@ -176,3 +179,9 @@ jobs:
           advanced-security: false
           annotations: true
           config: ${{ runner.temp }}/zizmor.yml
+
+      - name: Fail on findings
+        if: steps.zizmor.outcome == 'failure' && !inputs.report-only
+        run: |
+          echo "::error::zizmor reported findings; see the Run zizmor step."
+          exit 1
