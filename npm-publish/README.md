@@ -69,8 +69,7 @@ packs and passes instead of failing.
 1. **Sanitize** (`scripts/sanitize.sh`), before any Yarn command: unset `YARN_*` variables (except
    the action's own), point the action's own Yarn steps at a minimal generated configuration
    outside the checkout (`enableScripts: false`, the npm registry only, no plugins), ignore
-   `yarnPath`, delete
-   `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
+   `yarnPath`, delete `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
    `https://registry.npmjs.org`, and delete `prepublish`, `prepublishOnly`, `prepack` and
    `postpack` scripts from every workspace, private ones included.
 2. **Publish** (`scripts/main.sh`, `publish.sh`): require Yarn ≥ 4.16. Find the public workspaces
