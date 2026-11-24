@@ -7,6 +7,9 @@
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
 # REPOSITORY_VISIBILITY, GH_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, PACK_DIR, and
 # YARN_RC_FILENAME / YARN_IGNORE_PATH from sanitize.sh.
+#
+# Outputs (to $GITHUB_OUTPUT): dry-run=true if any package was packed rather
+# than published.
 
 set -euo pipefail
 
@@ -86,8 +89,16 @@ publish_monorepo() {
 
 if [[ "$(jq 'has("workspaces")' package.json)" == "true" ]]; then
   publish_monorepo
-  exit 0
+else
+  echo "No workspaces detected. Treating as a polyrepo."
+  "$script_path/publish.sh"
 fi
 
-echo "No workspaces detected. Treating as a polyrepo."
-"$script_path/publish.sh"
+if compgen -G "$PACK_DIR/*.tgz" >/dev/null; then
+  dry_run=true
+else
+  dry_run=false
+fi
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "dry-run=$dry_run" >>"$GITHUB_OUTPUT"
+fi

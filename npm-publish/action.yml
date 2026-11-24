@@ -44,6 +44,11 @@ inputs:
     required: false
     default: ''
 
+outputs:
+  dry-run:
+    description: '`true` if any package was packed instead of published.'
+    value: ${{ steps.publish.outputs.dry-run }}
+
 runs:
   using: composite
   steps:

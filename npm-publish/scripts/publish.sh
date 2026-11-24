@@ -17,7 +17,7 @@
 #
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
 # ACTIONS_ID_TOKEN_REQUEST_URL, REPOSITORY_VISIBILITY, PACK_DIR (where to
-# write tarballs), GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
+# write tarballs), GITHUB_STEP_SUMMARY.
 
 set -euo pipefail
 
@@ -78,10 +78,6 @@ else
     fi
     DRY_RUN="false"
   fi
-fi
-
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  echo "dry-run=$DRY_RUN" >>"$GITHUB_OUTPUT"
 fi
 
 if [[ "$DRY_RUN" != "true" ]]; then
