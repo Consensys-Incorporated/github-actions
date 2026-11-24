@@ -81,7 +81,7 @@ write_output "yarn-lock-available" "$yarn_lock_available"
 package_json_path=""
 if [[ -s package.json ]]; then
   package_json_path="package.json"
-elif [[ "$SKIP_INSTALL" != "true" && ("$IS_HIGH_RISK_ENVIRONMENT" == "false" || "$CACHE_NODE_MODULES" == "true") ]]; then
+elif [[ "$IS_HIGH_RISK_ENVIRONMENT" == "false" && "$SKIP_INSTALL" != "true" ]]; then
   package_json_path="$METADATA_DIR/package.json"
   if ! download_file "package.json" "$package_json_path"; then
     rm -f "$package_json_path"

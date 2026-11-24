@@ -7,7 +7,7 @@ inputs:
   is-high-risk-environment:
     description: >-
       Required. `true` for jobs that hold write tokens or publish credentials:
-      no Actions cache is read. `false` enables caching.
+      no Actions cache is read or written. `false` enables caching.
     required: true
   node-version:
     description: 'Node.js version (e.g. `24.x`, `24`, `v24.13.0`, `lts/*`). Defaults to the contents of `.nvmrc`.'
@@ -17,8 +17,8 @@ inputs:
     description: >-
       Save node_modules to the cache after installing, and skip setup entirely
       when the cache already holds an entry for this lockfile. Meant for a
-      "prepare" job that warms the cache for the rest of the run. When
-      `is-high-risk-environment` is `true`, the cache is only written.
+      "prepare" job that warms the cache for the rest of the run. Only allowed
+      when `is-high-risk-environment` is `false`.
     required: false
     default: 'false'
   ref:
@@ -74,10 +74,10 @@ runs:
       run: |
         if [[ "$IS_HIGH_RISK_ENVIRONMENT" == "true" ]]; then
           if [[ "$CACHE_NODE_MODULES" == "true" ]]; then
-            echo 'High-risk environment: cache reads disabled, cache save enabled (write-only mode).'
-          else
-            echo 'High-risk environment: all caching disabled.'
+            echo "::error::'cache-node-modules: true' is not allowed when 'is-high-risk-environment' is 'true'. High-risk jobs never use the Actions cache."
+            exit 1
           fi
+          echo 'High-risk environment: all caching disabled.'
         elif [[ "$IS_HIGH_RISK_ENVIRONMENT" == "false" ]]; then
           echo 'Low-risk environment: caching enabled.'
         else
@@ -113,7 +113,7 @@ runs:
 
     - name: Compute node_modules cache paths
       id: compute-cache-paths
-      if: ${{ (inputs.is-high-risk-environment == 'false' || inputs.cache-node-modules == 'true') && inputs.skip-install != 'true' }}
+      if: ${{ inputs.is-high-risk-environment == 'false' && inputs.skip-install != 'true' }}
       shell: bash
       env:
         PACKAGE_JSON_FILE: ${{ steps.download-metadata.outputs.package-json-path }}
@@ -178,7 +178,7 @@ runs:
     # Low-risk only.
     - name: Restore Yarn cache
       id: restore-yarn-cache
-      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment != 'true' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
         node-version: ${{ steps.setup-node.outputs.node-version }}
@@ -205,10 +205,8 @@ runs:
           echo 'allow-scripts is not installed; skipping.'
         fi
 
-    # In a high-risk environment the restore steps above are skipped, but the
-    # cache is still saved (write-only mode).
     - name: Save node_modules to cache
-      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.cache-node-modules == 'true' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && inputs.cache-node-modules == 'true' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ${{ steps.compute-cache-paths.outputs.paths }}
