@@ -8,7 +8,9 @@ Ported from [`MetaMask/action-is-release`](https://github.com/MetaMask/action-is
 (MIT; see [NOTICE](NOTICE)). Differences: prefixes are matched literally (upstream matched them as regular
 expressions, so `Release 1.2.0` also matched `Release 1x2y0`); prefixes may also be separated by
 newlines, whitespace around them is trimmed and empty ones are ignored; the checkout does not
-persist credentials, and `github-token` is passed only to the fetch of `before`.
+persist credentials, and `github-token` is passed only to the fetch of `before`; `before` must be a
+full commit SHA (upstream passed any value to `git fetch`, where one starting with `-` is read as
+an option).
 
 ## Usage
 
@@ -44,7 +46,7 @@ jobs:
 | -------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `commit-starts-with` | `''`                         | Prefixes separated by commas or newlines; `[version]` is replaced by the new version. If empty, a version change alone makes a release. |
 | `commit-message`     | `''`                         | Message to check instead of the subject of the checked-out commit.                                                      |
-| `before`             | `${{ github.event.before }}` | The commit to compare with.                                                                                             |
+| `before`             | `${{ github.event.before }}` | The full SHA (40 or 64 hexadecimal characters) of the commit to compare with.                                           |
 | `github-token`       | `${{ github.token }}`        | Used only to fetch `before` (private repositories, multi-commit pushes). Not stored in `.git/config`.                   |
 | `skip-checkout`      | `false`                      | Reuse the caller's checkout. `before` must be reachable or fetchable from it.                                           |
 
@@ -57,19 +59,21 @@ jobs:
 ## Behavior
 
 1. Unless `skip-checkout`, check out `github.sha` with `fetch-depth: 2`.
-2. Fetch `before` (a push may contain more than one commit), passing `github-token` to that
+2. Check that `before` is a full commit SHA, and fail if it is not.
+3. Fetch `before` (a push may contain more than one commit), passing `github-token` to that
    command only. If the fetch fails but `before` is already present, continue with a warning.
-3. If `before`'s root `package.json` version equals the current one, not a release.
-4. If `commit-starts-with` is set and the message matches none of the prefixes, not a release.
-5. Otherwise, a release.
+4. If `before`'s root `package.json` version equals the current one, not a release.
+5. If `commit-starts-with` is set and the message matches none of the prefixes, not a release.
+6. Otherwise, a release.
 
-A push that creates a branch has an all-zero `before`, which cannot be fetched, so the action
-fails. Use it on pushes to an existing branch.
+A push that creates a branch has an all-zero `before`, with no commit to compare with, so the
+action fails. Use it on pushes to an existing branch.
 
 ## Tests
 
 `test/fixtures.sh` builds fixture repositories with local origins, clones them with `--depth 2`
 and runs the script; `.github/workflows/test_npm-is-release.yml` runs it and runs the action with
 `skip-checkout`. Run against upstream's script, the fixtures give the same results except for the
-cases covering the differences above: the two literal-matching cases and the three prefix-list
-cases (spaces after commas, newline separators, empty prefixes).
+cases covering the differences above: the two literal-matching cases, the three prefix-list
+cases (spaces after commas, newline separators, empty prefixes), the two checks of the token
+passed to the fetch, and the check that a `before` starting with `-` runs no command.

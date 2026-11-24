@@ -31,13 +31,14 @@ OCAP_PREFIXES='Release [version],Release v[version],Release/[version],Release/v[
 
 # Builds a repository at $WORK/<name>.src with an origin at $WORK/<name>.git.
 # Arguments after the name are commits, each "<version>|<subject>".
-# Prints the SHA of each commit, one per line, oldest first.
+# Prints the SHA of each commit, one per line, oldest first. OBJECT_FORMAT
+# (default sha1) sets the repositories' hash algorithm.
 build() {
   local name="$1"
   shift
   local src="$WORK/$name.src" origin="$WORK/$name.git" i=0
-  git init -q --bare "$origin"
-  git init -q "$src"
+  git init -q --bare --object-format="${OBJECT_FORMAT:-sha1}" "$origin"
+  git init -q --object-format="${OBJECT_FORMAT:-sha1}" "$src"
   for spec in "$@"; do
     local version="${spec%%|*}" subject="${spec#*|}"
     i=$((i + 1))
@@ -219,6 +220,25 @@ fi
 expect error "empty BEFORE" multi BEFORE=
 # A push that creates a branch has an all-zero before SHA. Documented limitation.
 expect error "all-zero BEFORE (new branch)" multi BEFORE=0000000000000000000000000000000000000000
+
+# BEFORE must be a full SHA. A value starting with "-" would otherwise reach
+# git fetch as an option: --upload-pack runs a command on a local origin.
+expect error "BEFORE that is a git option" multi BEFORE="--upload-pack=touch $WORK/pwned;git-upload-pack"
+if [[ -e "$WORK/pwned" ]]; then
+  echo "not ok - BEFORE that is a git option does not run a command"
+  echo "BEFORE option ran a command" >>"$FAILURES"
+else
+  echo "ok - BEFORE that is a git option does not run a command"
+fi
+build_shas before-format '1.1.0|Initial' '1.2.0|Release 1.2.0 (#5)'
+clone before-format
+expect error "abbreviated BEFORE" before-format BEFORE="${shas[0]:0:12}"
+expect error "BEFORE that is a ref" before-format BEFORE=HEAD^
+expect true "upper-case BEFORE" before-format BEFORE="$(tr a-f A-F <<<"${shas[0]}")"
+
+OBJECT_FORMAT=sha256 build_shas sha256 '1.1.0|Initial' '1.2.0|Bump version' '1.2.0|Release 1.2.0 (#5)'
+clone sha256
+expect true "SHA-256 repository (64-character BEFORE)" sha256 BEFORE="${shas[0]}"
 
 count="$(wc -l <"$FAILURES" | tr -d ' ')"
 if ((count > 0)); then

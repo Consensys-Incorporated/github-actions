@@ -20,7 +20,9 @@ inputs:
     required: false
     default: ''
   before:
-    description: 'The commit to compare with. Defaults to the push event''s `before`.'
+    description: >-
+      The full SHA (40 or 64 hexadecimal characters) of the commit to compare
+      with. Defaults to the push event's `before`.
     required: false
     default: ${{ github.event.before }}
   github-token:

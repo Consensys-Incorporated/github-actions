@@ -8,7 +8,7 @@
 # literally.
 #
 # Environment:
-#   BEFORE: the commit to compare with (required)
+#   BEFORE: the full SHA of the commit to compare with (required)
 #   COMMIT_STARTS_WITH: prefixes separated by commas or newlines (optional)
 #   COMMIT_MESSAGE: message to check instead of HEAD's subject (optional)
 #   GITHUB_TOKEN: token for fetching BEFORE (optional); with GITHUB_SERVER_URL
@@ -26,6 +26,21 @@ COMMIT_MESSAGE="${COMMIT_MESSAGE:-}"
 
 if [[ -z "${BEFORE:-}" ]]; then
   echo "::error::The before SHA is not set."
+  exit 1
+fi
+
+# A push that creates a branch has an all-zero before SHA: nothing to compare
+# with.
+if [[ "$BEFORE" =~ ^0+$ ]]; then
+  echo "::error::The before SHA is all zeros (a push that created a branch); there is no commit to compare with."
+  exit 1
+fi
+
+# A full SHA-1 or SHA-256 object name. BEFORE is passed to git fetch and
+# git show, where a value starting with "-" would be read as an option, and it
+# is printed in workflow commands below.
+if [[ ! "$BEFORE" =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]]; then
+  echo "::error::The before input must be a full commit SHA (40 or 64 hexadecimal characters)."
   exit 1
 fi
 
