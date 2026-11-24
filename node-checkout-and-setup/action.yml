@@ -44,24 +44,16 @@ inputs:
     required: false
     default: 'false'
 
-# The outputs are for the unit tests in `build-lint-test.yml`, and
-# probably not useful for other workflows.
 outputs:
   node-modules-cache-hit:
-    description: 'Whether the node_modules cache was hit.'
-    value: ${{ steps.restore-node-modules.outputs.cache-hit || steps.try-skip-setup.outputs.cache-hit }}
-  yarn-cache-hit:
-    description: 'Whether the yarn cache was hit.'
-    value: ${{ steps.restore-yarn-cache.outputs.cache-hit }}
-  computed-node-version:
-    description: 'The truncated version of Node.js that was computed.'
-    value: ${{ steps.compute-node-version.outputs.node-version }}
-  node-version:
-    description: 'The full version of Node.js that was actually used.'
-    value: ${{ steps.setup-node.outputs.node-version }}
+    description: '`true` if node_modules was restored from, or found in, the cache; `false` otherwise.'
+    value: ${{ steps.restore-node-modules.outputs.cache-hit == 'true' || steps.try-skip-setup.outputs.cache-hit == 'true' }}
   skipped-setup:
-    description: 'Whether the setup steps were skipped due to a cache hit.'
-    value: ${{ steps.try-skip-setup.outputs.cache-hit }}
+    description: '`true` if checkout, Node.js setup and install were skipped because the cache already holds node_modules; `false` otherwise.'
+    value: ${{ steps.try-skip-setup.outputs.cache-hit == 'true' }}
+  node-version:
+    description: 'The Node.js version that was set up (e.g. `v24.13.0`); empty if setup was skipped.'
+    value: ${{ steps.setup-node.outputs.node-version }}
 
 runs:
   using: composite
@@ -188,7 +180,6 @@ runs:
     # On a node_modules cache miss, restore Yarn's download cache instead.
     # Low-risk only.
     - name: Restore Yarn cache
-      id: restore-yarn-cache
       if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
