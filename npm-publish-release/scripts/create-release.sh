@@ -1,57 +1,62 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Creates the GitHub release v<release version> from the prepared notes and,
+# in a monorepo, tags HEAD with <name>@<version> for each released package and
+# pushes those tags.
+#
+# Environment:
+#   GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SERVER_URL (default https://github.com)
+#   RELEASE_COMMIT_ID: the commit to create the release at
+#   RELEASE_VERSION, RELEASE_MODE (monorepo|polyrepo)
+#   RELEASE_DIR: as written by prepare-release.sh
 
-set -e
-set -o pipefail
+set -euo pipefail
 
-if [ "${RUNNER_DEBUG:-}" = "1" ]; then
+if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
   set -x
 fi
 
-if [[ -z $RELEASE_COMMIT_ID ]]; then
-  echo "Error: No release commit ID specified."
+for var in RELEASE_COMMIT_ID RELEASE_VERSION RELEASE_MODE RELEASE_DIR; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "::error::$var is not set."
+    exit 1
+  fi
+done
+
+notes_file="$RELEASE_DIR/notes.md"
+packages_file="$RELEASE_DIR/packages.tsv"
+
+if [[ ! -s "$notes_file" ]]; then
+  echo "::error::No release notes."
   exit 1
 fi
 
-if [[ -z $RELEASE_NOTES ]]; then
-  echo "Error: RELEASE_NOTES environment variable not set."
-  exit 1
+tags=()
+if [[ "$RELEASE_MODE" == "monorepo" ]]; then
+  while IFS=$'\t' read -r name _ version; do
+    tags+=("$name@$version")
+  done <"$packages_file"
+  if ((${#tags[@]} == 0)); then
+    echo "::error::No released packages."
+    exit 1
+  fi
 fi
 
-if [[ -z $RELEASE_VERSION ]]; then
-  echo "Error: No release version specified."
-  exit 1
-fi
-
-if [[ -z $RELEASE_STRATEGY ]]; then
-  echo "Error: No version strategy specified."
-  exit 1
-fi
-
-if [[ "$(jq 'has("workspaces")' package.json)" = "true" && "$RELEASE_STRATEGY" = "independent" ]]; then
-  IS_MONOREPO_WITH_INDEPENDENT_VERSIONS=1
-else
-  IS_MONOREPO_WITH_INDEPENDENT_VERSIONS=0
-fi
-
-if [[ $IS_MONOREPO_WITH_INDEPENDENT_VERSIONS -eq 1 && -z $RELEASE_PACKAGES ]]; then
-  echo "Error: No updated packages specified."
-  exit 1
-fi
-
-gh release create \
-  "v$RELEASE_VERSION" \
+gh release create "v$RELEASE_VERSION" \
   --title "$RELEASE_VERSION" \
-  --notes "$RELEASE_NOTES" \
+  --notes-file "$notes_file" \
   --target "$RELEASE_COMMIT_ID"
 
-if [[ $IS_MONOREPO_WITH_INDEPENDENT_VERSIONS -eq 1 ]]; then
-  echo "Notice: Using independent versioning strategy."
-
+if ((${#tags[@]} > 0)); then
   git config user.name github-actions
   git config user.email github-actions@github.com
 
-  while read -r name version; do
-    git tag "${name}@${version}" HEAD
-  done< <(echo "$RELEASE_PACKAGES" | jq --raw-output '.packages[] | "\(.name) \(.version)"')
-  git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" --tags
+  refspecs=()
+  for tag in "${tags[@]}"; do
+    git tag -- "$tag" HEAD
+    refspecs+=("refs/tags/$tag")
+  done
+  server_url="${GITHUB_SERVER_URL:-https://github.com}"
+  git push "https://x-access-token:${GH_TOKEN}@${server_url#https://}/${GITHUB_REPOSITORY}.git" "${refspecs[@]}"
 fi
