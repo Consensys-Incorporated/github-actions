@@ -64,7 +64,8 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/main.sh"'
 
-    # Run from /tmp, so that no .npmrc in the repository applies.
+    # Run from /tmp, so that no .npmrc in the repository applies. Without
+    # install scripts: pkdiff's dependencies are not pinned.
     - name: Install pkdiff
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
@@ -73,7 +74,7 @@ runs:
         BASH_ENV: ''
         ENV: ''
         NODE_OPTIONS: ''
-      run: npm i -g pkdiff@2.0.1
+      run: npm i -g --ignore-scripts pkdiff@2.0.1
 
     - name: Generate package diff report
       if: ${{ steps.publish.outputs.dry-run == 'true' }}

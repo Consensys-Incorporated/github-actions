@@ -105,7 +105,8 @@ packs and passes instead of failing.
   doesn't, so `slack-webhook-url`, `channel`, `subteam`, `username` and `icon-url` are removed.
 - Publish commands are bash arrays, not strings split on spaces.
 - The artifact has an explicit name, overwritten by a second dry run in the same workflow run.
-- `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies.
+- `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies, and with
+  `--ignore-scripts`, since its dependencies aren't pinned.
 - Tarballs go to `$RUNNER_TEMP/npm-publish-packages` rather than `/tmp`, so tarballs left by
   other jobs on a reused runner aren't reported or uploaded.
 - An npm lookup error other than "not found" fails the action, so a registry outage can't send an
