@@ -26,9 +26,9 @@ runs:
   using: composite
   steps:
     # Reads manifests and changelogs only. No Yarn, npm or Node.js runs in this
-    # action: the job holds a token with contents: write. BASH_ENV, ENV and
-    # NODE_OPTIONS are cleared so that values an earlier step wrote to
-    # $GITHUB_ENV do not run code in these steps.
+    # action: the job holds a token with contents: write. BASH_ENV and ENV are
+    # cleared so that values an earlier step wrote to $GITHUB_ENV do not run
+    # code in these steps.
     - name: Prepare release
       id: prepare
       shell: bash
@@ -38,7 +38,6 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
       run: '"$ACTION_PATH/scripts/prepare-release.sh"'
 
     - name: Create release
@@ -52,5 +51,4 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
       run: '"$ACTION_PATH/scripts/create-release.sh"'

@@ -125,8 +125,8 @@ heading or the first link reference definition, with blank lines trimmed at both
 - No Yarn, npm or Node.js command runs, so no repository-controlled code (Yarn plugins, scripts)
   runs while the token has `contents: write`. The job must not run any earlier (see
   [Usage](#usage)).
-- `BASH_ENV`, `ENV` and `NODE_OPTIONS` are cleared in the action's steps, so values that an
-  earlier step wrote to `$GITHUB_ENV` do not run code there. This does not protect against
+- `BASH_ENV` and `ENV` are cleared in the action's steps, so values that an earlier step wrote
+  to `$GITHUB_ENV` do not run code there. This does not protect against
   `$GITHUB_PATH` or other changes an earlier step can make.
 - Manifest and changelog values reach commands as quoted shell variables, never through `${{ }}`.
 - The only tags created are `<name>@<version>` for released packages, with SemVer versions.
