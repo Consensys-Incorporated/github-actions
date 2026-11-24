@@ -12,11 +12,21 @@ set -euo pipefail
 
 spec="$1"
 
+# The registry is set on the command line, which takes precedence over the
+# npm_config_* variables the caller's job may set (e.g. npm_config_registry)
+# and over .npmrc files. A scope's registry is a separate setting, which
+# --registry doesn't override.
+registry=https://registry.npmjs.org
+options=(--registry "$registry")
+if [[ "$spec" == @*/* ]]; then
+  options+=("--${spec%%/*}:registry=$registry")
+fi
+
 # Run from /tmp so that Corepack does not detect Yarn and no .npmrc in the
 # repository applies. `--` so that a spec starting with `-` isn't read as an
 # option.
 set +e
-output="$(cd /tmp && npm view --workspaces false --json -- "$spec" version 2>/dev/null)"
+output="$(cd /tmp && npm view "${options[@]}" --workspaces false --json -- "$spec" version 2>/dev/null)"
 status=$?
 set -e
 

@@ -18,13 +18,28 @@ mkdir -p "$SHIMS"
 
 # npm: `npm view [options] -- <spec> version` prints a version iff <spec> is a
 # line of $NPM_PUBLISHED, fails with E500 if the file has a "!error" line, and
-# with E404 otherwise. Fails if <spec> doesn't follow `--`.
+# with E404 otherwise. Fails if <spec> doesn't follow `--`, or if the options
+# don't include `--registry https://registry.npmjs.org` and, for a scoped
+# <spec>, `--@<scope>:registry=https://registry.npmjs.org`: npm_config_*
+# variables from the caller's job could otherwise redirect the lookup.
 cat >"$SHIMS/npm" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "view" ]]; then
-  while (($# > 0)) && [[ "$1" != "--" ]]; do shift; done
+  options=()
+  while (($# > 0)) && [[ "$1" != "--" ]]; do
+    options+=("$1")
+    shift
+  done
   if (($# < 2)); then
     echo "npm shim: no -- before the spec" >&2
+    exit 1
+  fi
+  if [[ " ${options[*]} " != *" --registry https://registry.npmjs.org "* ]]; then
+    echo "npm shim: no --registry https://registry.npmjs.org" >&2
+    exit 1
+  fi
+  if [[ "$2" == @*/* && " ${options[*]} " != *" --${2%%/*}:registry=https://registry.npmjs.org "* ]]; then
+    echo "npm shim: no --${2%%/*}:registry=https://registry.npmjs.org" >&2
     exit 1
   fi
   if grep -qxF -- "$2" "$NPM_PUBLISHED"; then

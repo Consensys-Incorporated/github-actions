@@ -121,6 +121,11 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
   other jobs on a reused runner aren't reported or uploaded.
 - An npm lookup error other than "not found" fails the action, so a registry outage can't send an
   existing package down the token path.
+- `npm view` is given `--registry https://registry.npmjs.org`, and for a scoped package
+  `--@<scope>:registry=https://registry.npmjs.org` (which `--registry` doesn't override), so that
+  `npm_config_*` variables set by the caller's job or through `$GITHUB_ENV`, such as
+  `npm_config_registry`, or an `.npmrc`, can't redirect the lookup that chooses between the token
+  and OIDC.
 - A single-package repository publishes only if its root isn't private and its version isn't on
   npm yet, so re-running a release doesn't fail on an existing version.
 - Lifecycle scripts are removed from private workspaces too.
@@ -152,7 +157,7 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 - No repository-controlled code runs from the sanitize step onward: no repository `.yarnrc.yml`,
   Yarn plugins, `yarnPath`, lifecycle scripts, `YARN_*` overrides, `.corepack.env` or package bins,
   and no `BASH_ENV`, `ENV` or `NODE_OPTIONS` from earlier steps.
-- Packages are published only to `https://registry.npmjs.org`.
+- Packages are published only to `https://registry.npmjs.org`, and looked up only there.
 - The token is used only for a package's first publish; existing packages publish only with OIDC,
   staged and with provenance.
 - No manifest value is interpolated into a `run:` step, and none is printed where the runner could
@@ -160,10 +165,11 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 
 ## Tests
 
-`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims, that an invalid `dry-run`
-fails, that invalid names and versions fail without being read as workflow commands, that Yarn's
-output is wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that a
-monorepo's workspaces are handled in Yarn's order and stop at the first failure.
+`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims (the `npm` shim fails
+unless `npm view` is pinned to `https://registry.npmjs.org`), that an invalid `dry-run` fails, that
+invalid names and versions fail without being read as workflow commands, that Yarn's output is
+wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that a monorepo's
+workspaces are handled in Yarn's order and stop at the first failure.
 `test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
 except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
 the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
