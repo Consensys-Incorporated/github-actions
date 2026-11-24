@@ -188,7 +188,8 @@ jobs:
 
   # No repository code runs: not the .yarnrc.yml plugin, not yarnPath, not
   # lifecycle scripts, not bins that shadow the tools the action runs; and
-  # YARN_* variables from the job do not apply.
+  # YARN_* variables from the job, and BASH_ENV and NODE_OPTIONS from
+  # $GITHUB_ENV, do not apply.
   sanitize:
     name: Sanitizes Yarn configuration
     runs-on: ubuntu-latest
@@ -207,6 +208,23 @@ jobs:
         run: |
           corepack enable
           actions-repo/npm-publish/test/make-fixture.sh canary "$GITHUB_WORKSPACE"
+      # As an earlier step in a caller's job could. Later steps of this job
+      # clear them.
+      - name: Set BASH_ENV and NODE_OPTIONS in $GITHUB_ENV
+        run: |
+          echo "touch '$CANARY_DIR/bash_env'" >"$CANARY_DIR/bash-env.sh"
+          echo "require('fs').writeFileSync('$CANARY_DIR/node_options', 'ran');" >"$CANARY_DIR/node-options.cjs"
+          {
+            echo "BASH_ENV=$CANARY_DIR/bash-env.sh"
+            echo "NODE_OPTIONS=--require $CANARY_DIR/node-options.cjs"
+          } >>"$GITHUB_ENV"
+      # Control: they run code in a step that doesn't clear them.
+      - name: Check that BASH_ENV and NODE_OPTIONS apply
+        run: |
+          node -e ''
+          test -e "$CANARY_DIR/bash_env"
+          test -e "$CANARY_DIR/node_options"
+          rm "$CANARY_DIR/bash_env" "$CANARY_DIR/node_options"
       - name: Dry run
         uses: ./actions-repo/npm-publish
         # The dry run passes with or without these overrides: packing does not
@@ -219,9 +237,12 @@ jobs:
         with:
           dry-run: true
       - name: Assert no canary ran
+        env:
+          BASH_ENV: ''
+          NODE_OPTIONS: ''
         run: |
           failed=0
-          for marker in plugin yarnpath prepublish prepublishOnly prepack postpack bin; do
+          for marker in plugin yarnpath prepublish prepublishOnly prepack postpack bin bash_env node_options; do
             if [[ -e "$CANARY_DIR/$marker" ]]; then
               echo "::error::Canary '$marker' ran during publish."
               failed=1
@@ -229,6 +250,9 @@ jobs:
           done
           exit "$failed"
       - name: Assert the package was packed without lifecycle scripts
+        env:
+          BASH_ENV: ''
+          NODE_OPTIONS: ''
         run: |
           tarball="$RUNNER_TEMP/$PACK_DIR_NAME/@consensys-incorporated-test-npm-publish-fixture-canary-999.0.0.tgz"
           test -f "$tarball"
@@ -240,6 +264,8 @@ jobs:
       # checks.
       - name: Assert YARN_* overrides are ignored
         env:
+          BASH_ENV: ''
+          NODE_OPTIONS: ''
           YARN_IGNORE_PATH: '1'
           YARN_NPM_REGISTRY_SERVER: https://example.invalid
           YARN_NPM_PUBLISH_REGISTRY: https://example.invalid
