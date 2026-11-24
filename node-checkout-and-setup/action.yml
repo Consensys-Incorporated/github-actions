@@ -165,9 +165,16 @@ runs:
       shell: bash
       env:
         NODE_VERSION: ${{ steps.setup-node.outputs.node-version }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         echo "Using Node.js $NODE_VERSION"
-        corepack enable
+        # Node.js 25 and later don't ship Corepack. Install it next to the
+        # selected Node.js rather than use whichever one the runner has.
+        node_bin="$(dirname "$(command -v node)")"
+        if [[ ! -x "$node_bin/corepack" ]]; then
+          "$ACTION_PATH/scripts/retry.sh" npm install --global --ignore-scripts corepack@0.36.0
+        fi
+        "$node_bin/corepack" enable
 
     - name: Restore node_modules from cache
       id: restore-node-modules
