@@ -128,7 +128,7 @@ function getChangedFiles(repoPath: string, baseRef: string): string[] {
   }
 
   try {
-    return git(repoPath, ['diff', '--name-only', `origin/${baseRef}...HEAD`])
+    return git(repoPath, ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${baseRef}...HEAD`])
       .split('\n')
       .filter(Boolean);
   } catch (error) {
