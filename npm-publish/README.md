@@ -109,6 +109,7 @@ packs and passes instead of failing.
   existing package down the token path.
 - A single-package repository publishes only if its root isn't private and its version isn't on
   npm yet, so re-running a release doesn't fail on an existing version.
+- Lifecycle scripts are removed from private workspaces too.
 - `dry-run` is `true` if any package was packed, whatever order the packages were handled in.
 - The Slack message keeps a scoped name's `@`.
 
@@ -127,4 +128,5 @@ packs and passes instead of failing.
 `.github/workflows/test_npm-publish.yml` runs it, and runs the action with real Yarn against
 fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a
 foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath` and lifecycle scripts
-would write marker files, and the Slack notification against a local listener.
+would write marker files, and the Slack notification against a local listener and a dead
+webhook.
