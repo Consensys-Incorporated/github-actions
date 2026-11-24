@@ -26,9 +26,9 @@ inputs:
     required: false
     default: ''
   persist-credentials:
-    description: 'Passed to `actions/checkout`. Set to `false` unless later steps use the job token from `.git/config` (e.g. to push).'
+    description: 'Passed to `actions/checkout`. Set to `true` only if later steps use the job token from `.git/config` (e.g. to push).'
     required: false
-    default: 'true'
+    default: 'false'
   skip-install:
     description: 'Check out and set up Node.js only. No Yarn command runs, and no cache is used.'
     required: false
@@ -71,7 +71,18 @@ runs:
       env:
         IS_HIGH_RISK_ENVIRONMENT: ${{ inputs.is-high-risk-environment }}
         CACHE_NODE_MODULES: ${{ inputs.cache-node-modules }}
+        PERSIST_CREDENTIALS: ${{ inputs.persist-credentials }}
+        SKIP_INSTALL: ${{ inputs.skip-install }}
+        SKIP_ALLOW_SCRIPTS: ${{ inputs.skip-allow-scripts }}
+        FORCE_SETUP: ${{ inputs.force-setup }}
       run: |
+        for input in CACHE_NODE_MODULES PERSIST_CREDENTIALS SKIP_INSTALL SKIP_ALLOW_SCRIPTS FORCE_SETUP; do
+          if [[ "${!input}" != "true" && "${!input}" != "false" ]]; then
+            name="$(tr '[:upper:]_' '[:lower:]-' <<<"$input")"
+            echo "::error::'$name' must be 'true' or 'false', got '${!input}'."
+            exit 1
+          fi
+        done
         if [[ "$IS_HIGH_RISK_ENVIRONMENT" == "true" ]]; then
           if [[ "$CACHE_NODE_MODULES" == "true" ]]; then
             echo "::error::'cache-node-modules: true' is not allowed when 'is-high-risk-environment' is 'true'. High-risk jobs never use the Actions cache."
