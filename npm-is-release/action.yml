@@ -10,8 +10,8 @@ inputs:
   commit-starts-with:
     description: >-
       Comma-separated prefixes, one of which the commit message must start
-      with. `[version]` is replaced by the new version. If empty, a version
-      change alone makes a release.
+      with. `[version]` is replaced by the new version. Matched literally.
+      If empty, a version change alone makes a release.
     required: false
     default: ''
   commit-message:
