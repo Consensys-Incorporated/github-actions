@@ -11,7 +11,8 @@ newlines, whitespace around them is trimmed and empty ones are ignored; the chec
 persist credentials, and `github-token` is passed only to the fetch of `before`; `before` must be a
 full commit SHA (upstream passed any value to `git fetch`, where one starting with `-` is read as
 an option); both versions must be valid semver, or the action fails (upstream compared any values,
-including a missing version).
+including a missing version); the current version is read from the committed `package.json` at
+`HEAD` (upstream read the working tree, so with `skip-checkout` an uncommitted change counted).
 
 ## Usage
 
@@ -49,7 +50,7 @@ jobs:
 | `commit-message`     | `''`                         | Message to check instead of the subject of the checked-out commit.                                                      |
 | `before`             | `${{ github.event.before }}` | The full SHA (40 or 64 hexadecimal characters) of the commit to compare with.                                           |
 | `github-token`       | `${{ github.token }}`        | Used only to fetch `before` (private repositories, multi-commit pushes). Not stored in `.git/config`.                   |
-| `skip-checkout`      | `false`                      | Reuse the caller's checkout. `before` must be reachable or fetchable from it.                                           |
+| `skip-checkout`      | `false`                      | Reuse the caller's checkout. `before` must be reachable or fetchable from it. Uncommitted changes are ignored.          |
 
 ## Outputs
 
@@ -63,8 +64,8 @@ jobs:
 2. Check that `before` is a full commit SHA, and fail if it is not.
 3. Fetch `before` (a push may contain more than one commit), passing `github-token` to that
    command only. If the fetch fails but `before` is already present, continue with a warning.
-4. Read the root `package.json` version at `before` and the current one, and fail if either is
-   missing or not valid semver. If they are equal, not a release.
+4. Read the root `package.json` version at `before` and at `HEAD` (the committed file, not the
+   working tree), and fail if either is missing or not valid semver. If they are equal, not a release.
 5. If `commit-starts-with` is set and the message matches none of the prefixes, not a release.
 6. Otherwise, a release.
 
@@ -79,5 +80,5 @@ and runs the script; `.github/workflows/test_npm-is-release.yml` runs it and run
 cases covering the differences above: the three literal-matching cases (including the
 pre-release version, whose `+` upstream read as a quantifier), the three prefix-list cases
 (spaces after commas, newline separators, empty prefixes), the two checks of the token passed to
-the fetch, the check that a `before` starting with `-` runs no command, and the four invalid
-version cases.
+the fetch, the check that a `before` starting with `-` runs no command, the four invalid
+version cases, and the uncommitted-change case.

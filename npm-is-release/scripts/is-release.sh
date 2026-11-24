@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Decides whether HEAD is a release commit: the root package.json version
-# differs from the one at BEFORE, and, if COMMIT_STARTS_WITH is set, the commit
+# Decides whether HEAD is a release commit: the root package.json version at
+# HEAD differs from the one at BEFORE, and, if COMMIT_STARTS_WITH is set, the commit
 # message starts with one of its prefixes, separated by commas or newlines
 # (with "[version]" replaced by the new version). Prefixes are matched
 # literally.
@@ -96,7 +96,9 @@ if ! fetch_before; then
 fi
 
 version_before="$(git show "$BEFORE:package.json" | jq --raw-output .version)"
-version_after="$(jq --raw-output .version package.json)"
+# HEAD's package.json, not the working tree's: with skip-checkout, an
+# uncommitted change in the caller's checkout is not part of the commit.
+version_after="$(git show HEAD:package.json | jq --raw-output .version)"
 
 # Both versions are printed and substituted into the prefixes, so they must
 # be versions: a newline followed by "::" would start a workflow command. A

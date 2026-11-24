@@ -37,6 +37,8 @@ inputs:
     description: >-
       `true` to reuse the caller's checkout, which must have `before`
       reachable or fetchable (e.g. `fetch-depth: 2` for a single-commit push).
+      The version is read from the committed package.json at HEAD, so
+      uncommitted changes are ignored.
     required: false
     default: 'false'
 

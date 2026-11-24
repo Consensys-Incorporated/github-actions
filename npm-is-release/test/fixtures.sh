@@ -164,6 +164,14 @@ build_shas no-version 'null|Initial' '1.2.0|Release 1.2.0'
 clone no-version
 expect error "previous package.json without a version" no-version BEFORE="${shas[0]}"
 
+# With skip-checkout the caller's working tree may differ from HEAD; the
+# committed version counts.
+build_shas uncommitted '1.1.0|Initial' '1.1.0|Release 1.2.0'
+clone uncommitted
+jq '.version = "1.2.0"' "$WORK/uncommitted/package.json" >"$WORK/uncommitted.json"
+mv "$WORK/uncommitted.json" "$WORK/uncommitted/package.json"
+expect false "uncommitted version change in the working tree" uncommitted BEFORE="${shas[0]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES"
+
 build_shas no-prefix '1.1.0|Initial' '1.2.0|chore: bump'
 clone no-prefix
 expect true "version changed, no commit-starts-with" no-prefix BEFORE="${shas[0]}"
