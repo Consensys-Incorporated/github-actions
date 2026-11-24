@@ -208,7 +208,9 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
       run: |
-        if yarn bin allow-scripts &>/dev/null; then
+        # Not `yarn bin`: Yarn's first run downloads Yarn, and a failed
+        # download would read as "not installed".
+        if [[ -x node_modules/.bin/allow-scripts ]]; then
           "$ACTION_PATH/scripts/retry.sh" yarn allow-scripts
         else
           echo 'allow-scripts is not installed; skipping.'
