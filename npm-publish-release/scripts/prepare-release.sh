@@ -109,6 +109,12 @@ else
       echo "::error::$manifest version '$version' is not a valid SemVer version."
       exit 1
     fi
+    # The name goes into a tag, an API path and packages.tsv, so it must be a
+    # valid npm package name.
+    if [[ ! "$name" =~ ^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$ ]]; then
+      echo "::error::$manifest name '$name' is not a valid npm package name."
+      exit 1
+    fi
 
     if tag_exists "$name@$version"; then
       echo "Skipping $name@$version: already released."
@@ -133,6 +139,10 @@ else
     fi
     if ! section="$(changelog_section "$changelog" "$version")"; then
       echo "::error::$changelog has no section for $version."
+      exit 1
+    fi
+    if [[ -z "${section//[[:space:]]/}" ]]; then
+      echo "::error::$changelog has an empty section for $version."
       exit 1
     fi
     if [[ "$first" == false ]]; then
