@@ -6,7 +6,7 @@ Changelogs must follow [Keep a Changelog](https://keepachangelog.com/) as parsed
 [`@metamask/auto-changelog`](https://github.com/MetaMask/auto-changelog), with entries linking
 pull requests as `([#123](https://github.com/<owner>/<repo>/pull/123))`.
 
-Ported from `MetaMask/github-tools/.github/actions/check-changelog` v1 (MIT).
+Ported from `MetaMask/github-tools/.github/actions/check-changelog` v1.
 
 ## Usage
 
