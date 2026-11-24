@@ -1,0 +1,127 @@
+name: Test npm-publish-release
+
+on:
+  push:
+    paths:
+      - 'npm-publish-release/**'
+      - '.github/workflows/test_npm-publish-release.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: npm-publish-release/test/fixtures.sh
+
+  # The action in a fixture monorepo workspace, with gh and git push shimmed.
+  action:
+    name: Action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace and shims
+        run: |
+          dir="$RUNNER_TEMP/fixture"
+          actions-repo/npm-publish-release/test/fixtures.sh --prepare-workspace "$dir"
+          shopt -s dotglob
+          mv "$dir"/* .
+          echo "$dir.shims" >>"$GITHUB_PATH"
+          {
+            echo "SHIM_LOG=$RUNNER_TEMP/shim.log"
+            echo "EXISTING_TAGS=$dir.existing-tags"
+          } >>"$GITHUB_ENV"
+          git config user.name test
+          git config user.email test@example.com
+      - name: Run action
+        id: action
+        uses: ./actions-repo/npm-publish-release
+      - name: Assert outputs, release and tags
+        env:
+          RELEASE_VERSION: ${{ steps.action.outputs.release-version }}
+        run: |
+          echo "release-version=$RELEASE_VERSION"
+          [[ "$RELEASE_VERSION" == "3.0.0" ]]
+          cat "$SHIM_LOG"
+          grep -q "^gh release create v3.0.0 --title 3.0.0 --notes-file .* --target $GITHUB_SHA\$" "$SHIM_LOG"
+          grep -q '^git push https://x-access-token:.*@github.com/.* refs/tags/@octo/a@1.1.0 refs/tags/@octo/b@2.0.0$' "$SHIM_LOG"
+          [[ "$(git tag --points-at HEAD | tr '\n' ' ')" == "@octo/a@1.1.0 @octo/b@2.0.0 " ]]
+      - name: Assert RELEASE_NOTES reaches later steps intact
+        run: |
+          if [[ "$RELEASE_NOTES" != "$(cat "$SHIM_LOG.notes")" ]]; then
+            echo "::error::RELEASE_NOTES differs from the release notes:"
+            echo "$RELEASE_NOTES"
+            exit 1
+          fi
+          # The fixture changelog has a line that looks like a heredoc delimiter.
+          grep -q '^- EOF_0123456789abcdef: ' <<<"$RELEASE_NOTES"
+          grep -q '^## @octo/b 2.0.0$' <<<"$RELEASE_NOTES"
+
+  # Runs the release preparation against Consensys-Incorporated/ocap-kernel at
+  # its Release 7.0.0 commit, with tag lookups answered as before that release,
+  # and compares the notes with the published v7.0.0 release, ignoring blank
+  # lines after "###" headings (auto-changelog v3 rendered none).
+  parity:
+    name: Parity with ocap-kernel v7.0.0
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_COMMIT: 4a0575165ee98aa5db46f8e6d4587a7f0ee7ed08
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: Consensys-Incorporated/ocap-kernel
+          ref: ${{ env.RELEASE_COMMIT }}
+          path: ocap-kernel
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Fetch the published release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view v7.0.0 -R Consensys-Incorporated/ocap-kernel --json body -q .body >"$RUNNER_TEMP/published.md"
+      - name: Prepare tag lookup shim
+        working-directory: ocap-kernel
+        run: |
+          git tag --points-at HEAD >"$RUNNER_TEMP/new-tags"
+          git tag | grep -vxFf "$RUNNER_TEMP/new-tags" >"$RUNNER_TEMP/existing-tags"
+          mkdir "$RUNNER_TEMP/shims"
+          cat >"$RUNNER_TEMP/shims/gh" <<'EOF'
+          #!/usr/bin/env bash
+          tag="${2#repos/*/git/ref/tags/}"
+          [[ "$1" == api ]] || exit 1
+          grep -qxF -- "$tag" "$RUNNER_TEMP/existing-tags" && exit 0
+          echo "gh: Not Found (HTTP 404)" >&2
+          exit 1
+          EOF
+          chmod +x "$RUNNER_TEMP/shims/gh"
+      - name: Prepare release
+        working-directory: ocap-kernel
+        run: |
+          export GITHUB_OUTPUT="$RUNNER_TEMP/output" GITHUB_ENV="$RUNNER_TEMP/env"
+          PATH="$RUNNER_TEMP/shims:$PATH" RELEASE_DIR="$RUNNER_TEMP/release" \
+            "$GITHUB_WORKSPACE/actions-repo/npm-publish-release/scripts/prepare-release.sh"
+      - name: Compare with the published release
+        run: |
+          normalize() {
+            awk 'prev ~ /^### / && /^$/ { prev = $0; next } { print; prev = $0 }' "$1"
+          }
+          normalize "$RUNNER_TEMP/published.md" >"$RUNNER_TEMP/published.normalized"
+          normalize "$RUNNER_TEMP/release/notes.md" >"$RUNNER_TEMP/notes.normalized"
+          diff -u "$RUNNER_TEMP/published.normalized" "$RUNNER_TEMP/notes.normalized"
+          # Released packages are exactly the tags the release created.
+          cut -f1,3 "$RUNNER_TEMP/release/packages.tsv" | tr '\t' @ >"$RUNNER_TEMP/released"
+          grep -v '^v' "$RUNNER_TEMP/new-tags" | diff -u - "$RUNNER_TEMP/released"
