@@ -7,7 +7,8 @@ per released package. In a single-package repository, the notes are the root cha
 section. Publishing to npm is a separate action, [`npm-publish`](../npm-publish).
 
 Ported from [`MetaMask/action-publish-release`](https://github.com/MetaMask/action-publish-release)
-v3 (MIT), in bash and jq: no `dist/`, no `package.json`, nothing installed at run time.
+v3 (MIT; see [NOTICE](NOTICE)), in bash and jq: no `dist/`, no `package.json`, nothing installed
+at run time.
 
 ## Usage
 
