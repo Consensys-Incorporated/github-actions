@@ -1,77 +1,87 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Publishes (or packs) every public workspace whose current version is not on
+# npm yet. Run after sanitize.sh.
+#
+# Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
+# REPOSITORY_VISIBILITY, GITHUB_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, and
+# YARN_RC_FILENAME / YARN_IGNORE_PATH from sanitize.sh.
 
-set -e
-set -o pipefail
+set -euo pipefail
 
-if [ "$RUNNER_DEBUG" = "1" ]; then
+if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
   set -x
 fi
 
-script_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# shellcheck source=scripts/environment.sh
+# shellcheck source=SCRIPTDIR/environment.sh
 source "$script_path/environment.sh"
 
-IFS='.' read -r YARN_MAJOR YARN_MINOR _ <<< "$(yarn --version)"
-if [[ "$YARN_MAJOR" -lt 4 || ( "$YARN_MAJOR" -eq 4 && "$YARN_MINOR" -lt 16 ) ]]; then
-  echo "::error::Yarn version 4.16.0 or higher is required. Detected version: $(yarn --version)."
+yarn_version="$(yarn --version)"
+IFS='.' read -r yarn_major yarn_minor _ <<<"$yarn_version"
+if [[ ! "$yarn_major" =~ ^[0-9]+$ || ! "$yarn_minor" =~ ^[0-9]+$ ]] ||
+  ((yarn_major < 4 || (yarn_major == 4 && yarn_minor < 16))); then
+  echo "::error::Yarn 4.16.0 or higher is required. Detected version: $yarn_version."
   exit 1
 fi
 
-if [[ -z "$PUBLISH_NPM_TAG" ]]; then
+if [[ -z "${PUBLISH_NPM_TAG:-}" ]]; then
   echo "::error::'npm-tag' not set."
   exit 1
 fi
 
-if [[ -n "$GITHUB_SHA" && -n "$GITHUB_REPOSITORY" ]]; then
-  pr_url=$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-    --jq '.[0].html_url // empty' 2>/dev/null || true)
+if [[ -n "${GITHUB_SHA:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+  pr_url="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+    --jq '.[0].html_url // empty' 2>/dev/null || true)"
   if [[ -n "$pr_url" ]]; then
-    echo "Notice: Releasing via pull request: $pr_url"
+    echo "Releasing via pull request: $pr_url"
   fi
 fi
 
 publish_monorepo() {
-  echo "Notice: Workspaces detected. Treating as monorepo."
+  echo "Workspaces detected. Treating as a monorepo."
 
-  # Determine upfront which workspaces actually need publishing, so that
-  # `yarn workspaces foreach` only runs for those. Each workspace is checked
-  # in parallel via `xargs -P`.
-  pending=$(
-    yarn workspaces list --json --no-private \
-      | jq --raw-output '.location' \
-      | while read -r location; do
-          jq --raw-output --arg location "$location" '
-            [
-              (.name // error("Missing .name in " + $location + "/package.json")),
-              (.version // error("Missing .version in " + $location + "/package.json"))
-            ] | @tsv
-          ' "$location/package.json"
-        done \
-      | xargs -P 10 -n 2 "$script_path/needs-publish.sh"
-  )
+  # Determine up front which workspaces need publishing, so that
+  # `yarn workspaces foreach` only runs for those. Workspaces are checked in
+  # parallel.
+  local pending
+  pending="$(
+    yarn workspaces list --json --no-private |
+      jq --raw-output '.location' |
+      while IFS= read -r location; do
+        jq --raw-output --arg location "$location" '
+          [
+            (.name // error("Missing .name in " + $location + "/package.json")),
+            (.version // error("Missing .version in " + $location + "/package.json"))
+          ] | @tsv
+        ' "$location/package.json" || exit 1
+      done |
+      xargs -P 10 -n 2 "$script_path/needs-publish.sh"
+  )"
 
   if [[ -z "$pending" ]]; then
-    echo "Notice: No packages need publishing."
-    exit 0
+    echo "No packages need publishing."
+    return 0
   fi
 
-  mapfile -t names <<< "$pending"
-  include_args=()
+  local -a names include_args=()
+  mapfile -t names <<<"$pending"
   for name in "${names[@]}"; do
     include_args+=(--include "$name")
   done
 
-  echo "Notice: Publishing ${#names[@]} package(s): ${pending//$'\n'/, }."
+  echo "Publishing ${#names[@]} package(s): ${pending//$'\n'/, }."
 
   yarn workspaces foreach --all "${include_args[@]}" --no-private --verbose \
     exec "$script_path/publish.sh"
 }
 
-if [[ "$(jq 'has("workspaces")' package.json)" = "true" ]]; then
+if [[ "$(jq 'has("workspaces")' package.json)" == "true" ]]; then
   publish_monorepo
   exit 0
 fi
 
-echo "Notice: No workspaces detected. Treating as polyrepo."
-"${script_path}"/publish.sh
+echo "No workspaces detected. Treating as a polyrepo."
+"$script_path/publish.sh"

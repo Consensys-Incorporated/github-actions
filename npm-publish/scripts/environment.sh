@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-
-# Yarn settings can be overridden with `YARN_*` environment variables, which
-# take precedence over the configuration file that the action controls (e.g.,
-# `YARN_NPM_PUBLISH_REGISTRY`). Unset all of them, except the ones the action
-# itself sets or needs.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sourced by every script that runs Yarn. `YARN_*` environment variables
+# override the configuration file the action controls (e.g.
+# YARN_NPM_PUBLISH_REGISTRY), and the caller's job may set them. Unset all of
+# them except the ones the action itself sets or needs.
 
 for name in $(compgen -e | grep '^YARN_' || true); do
   case "$name" in
