@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tests publish.sh's mode selection and main.sh's checks with `yarn` and `npm`
-# replaced by shims that record their arguments.
+# Tests publish.sh's mode selection, main.sh's checks and report.sh's pkdiff
+# arguments with `yarn`, `npm` and `pkdiff` replaced by shims that record their
+# arguments.
 #
 # Usage: test/publish-modes.sh
 
@@ -319,6 +320,29 @@ MAIN_DIR="$MONO" run_main SHIM_WORKSPACES="$mono_workspaces"
 check "monorepo: a name with a space and a quote is rejected whole" failed_with "Invalid package name: @test/it\\'s\\ a"
 echo '{"name": "@test/a", "version": "1.0.0"}' >"$MONO/packages/a/package.json"
 : >"$WORK/published"
+
+rm -f "$TARBALL" "$PACK_DIR"/*.tgz
+
+# report.sh pins pkdiff's download of <name>@latest to the npm registry.
+cat >"$SHIMS/pkdiff" <<'EOF'
+#!/usr/bin/env bash
+printf 'pkdiff' >>"$SHIM_LOG"
+printf ' %q' "$@" >>"$SHIM_LOG"
+echo >>"$SHIM_LOG"
+EOF
+chmod +x "$SHIMS/pkdiff"
+mkdir -p "$WORK/report/package"
+echo '{"name": "@test/npm-publish-modes", "version": "1.2.3"}' >"$WORK/report/package/package.json"
+tar -czf "$TARBALL" -C "$WORK/report" package
+: >"$WORK/shim.log"
+set +e
+LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" "$SCRIPTS/report.sh" 2>&1)"
+STATUS=$?
+set -e
+pkdiff_pinned() {
+  ((STATUS == 0)) && grep -q '^pkdiff .* --registry https://registry\.npmjs\.org .*-- ' "$WORK/shim.log"
+}
+check "report.sh passes --registry https://registry.npmjs.org to pkdiff" pkdiff_pinned
 
 rm -f "$TARBALL" "$PACK_DIR"/*.tgz
 if ((failures > 0)); then

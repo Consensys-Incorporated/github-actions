@@ -220,6 +220,20 @@ jobs:
         run: |
           corepack enable
           actions-repo/npm-publish/test/make-fixture.sh canary "$GITHUB_WORKSPACE"
+      # As an earlier step in a caller's job could. The dry run's npm lookups
+      # and pkdiff install fail if they use this registry.
+      - name: Set npm_config_registry in $GITHUB_ENV
+        run: |
+          {
+            echo "npm_config_registry=https://example.invalid/"
+            echo "npm_config_@consensys-incorporated:registry=https://example.invalid/"
+          } >>"$GITHUB_ENV"
+      # Control: npm uses them unless told otherwise.
+      - name: Check that npm_config_registry applies
+        working-directory: /tmp
+        run: |
+          [[ "$(npm config get registry)" == "https://example.invalid/" ]]
+          [[ "$(npm config get @consensys-incorporated:registry)" == "https://example.invalid/" ]]
       # As an earlier step in a caller's job could. Later steps of this job
       # clear them.
       - name: Set BASH_ENV and NODE_OPTIONS in $GITHUB_ENV

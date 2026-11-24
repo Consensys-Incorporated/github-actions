@@ -115,8 +115,14 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 - Publish commands are bash arrays, not strings split on spaces, and `npm view` and `pkdiff` get
   package names after `--`, so that a name starting with `-` isn't read as an option.
 - The artifact has an explicit name, overwritten by a second dry run in the same workflow run.
-- `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies, and with
-  `--ignore-scripts`, since its dependencies aren't pinned.
+- `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies, with
+  `--ignore-scripts`, since its dependencies aren't pinned, and with
+  `--registry https://registry.npmjs.org`, so that `npm_config_registry` can't redirect it. `pkdiff`
+  is also run with `--registry https://registry.npmjs.org`, which it passes to the `npm pack` that
+  downloads `<name>@latest`. That doesn't override a scope's registry (e.g.
+  `npm_config_@scope:registry` set through `$GITHUB_ENV`), and `pkdiff` has no option that does, so
+  for a scoped package the dry run's diff report can still be made against a tarball from another
+  registry. The report is informational only: nothing is published from it.
 - Tarballs go to `$RUNNER_TEMP/npm-publish-packages` rather than `/tmp`, so tarballs left by
   other jobs on a reused runner aren't reported or uploaded.
 - An npm lookup error other than "not found" fails the action, so a registry outage can't send an
@@ -157,7 +163,8 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 - No repository-controlled code runs from the sanitize step onward: no repository `.yarnrc.yml`,
   Yarn plugins, `yarnPath`, lifecycle scripts, `YARN_*` overrides, `.corepack.env` or package bins,
   and no `BASH_ENV`, `ENV` or `NODE_OPTIONS` from earlier steps.
-- Packages are published only to `https://registry.npmjs.org`, and looked up only there.
+- Packages are published only to `https://registry.npmjs.org`, and looked up only there. `pkdiff`
+  is installed from there too; its diff report can follow a scope's registry (see above).
 - The token is used only for a package's first publish; existing packages publish only with OIDC,
   staged and with provenance.
 - No manifest value is interpolated into a `run:` step, and none is printed where the runner could
@@ -166,7 +173,8 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 ## Tests
 
 `test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims (the `npm` shim fails
-unless `npm view` is pinned to `https://registry.npmjs.org`), that an invalid `dry-run` fails, that
+unless `npm view` is pinned to `https://registry.npmjs.org`), that `report.sh` passes
+`--registry https://registry.npmjs.org` to `pkdiff`, that an invalid `dry-run` fails, that
 invalid names and versions fail without being read as workflow commands, that Yarn's output is
 wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that a monorepo's
 workspaces are handled in Yarn's order and stop at the first failure.
@@ -176,6 +184,8 @@ the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and ru
 real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures without
 credentials, a foreign registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step),
 a polyrepo, a project whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins
-would write marker files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*`
+would write marker files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that a dry
+run with `npm_config_registry` and a scope's registry set to an unreachable host in `$GITHUB_ENV`
+still looks packages up on, and installs `pkdiff` from, `https://registry.npmjs.org`, that `YARN_*`
 overrides such as `YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads,
 and that `YARN_RC_FILENAME` isn't set in the caller's later steps.

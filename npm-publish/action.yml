@@ -95,7 +95,9 @@ runs:
       run: '"$ACTION_PATH/scripts/main.sh"'
 
     # Run from /tmp, so that no .npmrc in the repository applies. Without
-    # install scripts: pkdiff's dependencies are not pinned.
+    # install scripts: pkdiff's dependencies are not pinned. --registry
+    # overrides npm_config_registry from the caller's job (pkdiff's
+    # dependencies are unscoped, so no scope's registry applies).
     - name: Install pkdiff
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
@@ -104,7 +106,7 @@ runs:
         BASH_ENV: ''
         ENV: ''
         NODE_OPTIONS: ''
-      run: npm i -g --ignore-scripts pkdiff@2.0.1
+      run: npm i -g --ignore-scripts --registry https://registry.npmjs.org pkdiff@2.0.1
 
     - name: Generate package diff report
       if: ${{ steps.publish.outputs.dry-run == 'true' }}

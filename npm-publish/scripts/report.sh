@@ -18,10 +18,15 @@ for file in "$PACK_DIR"/*.tgz; do
   echo "Processing $file"
   name="$(tar -O -zxf "$file" package/package.json | jq --raw-output .name)"
   echo "$name"
-  # `--` so that a name starting with `-` isn't read as an option.
+  # `--` so that a name starting with `-` isn't read as an option. pkdiff
+  # downloads <name>@latest with `npm pack --registry=<registry>`, which
+  # overrides npm_config_registry from the caller's job but not a scope's
+  # registry (e.g. npm_config_@scope:registry), for which pkdiff has no
+  # option.
   pkdiff \
     --no-exit-code \
     --no-open \
+    --registry https://registry.npmjs.org \
     --output "$PACK_DIR/$(basename "$file").html" \
     -- "$file" "$name@latest" || true
 done
