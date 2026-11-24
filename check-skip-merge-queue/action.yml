@@ -3,8 +3,9 @@
 name: 'check-skip-merge-queue'
 description: >-
   In a merge_group run, report whether the pull request is first in the merge
-  queue and its branch already contains the base branch. If so, the caller can
-  skip jobs that the pull request's own run already ran on the same tree.
+  queue and its head commit already contains the base branch. If so, the
+  caller can skip jobs that the pull request's own run already ran on the same
+  tree.
 
 inputs:
   head-ref:
