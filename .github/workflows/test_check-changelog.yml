@@ -34,8 +34,33 @@ jobs:
       - name: Fixture repository tests
         run: test/fixtures.sh
 
+  # The action runs only on pull_request events. On any other event it must
+  # fail before checking anything out.
+  not-pull-request:
+    name: Fails outside pull_request events
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Run action
+        id: action
+        continue-on-error: true
+        uses: ./check-changelog
+      - name: Assert it failed without a checkout
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          if [[ "$OUTCOME" != failure ]]; then
+            echo "::error::Expected failure, got $OUTCOME"
+            exit 1
+          fi
+          test ! -e target-repo
+
   no-changelog-label:
     name: no-changelog label skips the check
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,15 +70,41 @@ jobs:
         uses: ./check-changelog
         with:
           labels: '[{"name": "bug"}, {"name": "no-changelog"}]'
-          # Would fail if the action tried to check it out.
-          repo: Consensys-Incorporated/does-not-exist
-          head-ref: does-not-exist
-          pr-number: '1'
       - name: Assert nothing was checked out
         run: test ! -e target-repo
 
+  # Runs the action on this repository's own pull request, fork or not, and
+  # checks what it checked out. This repository has no root package.json, so
+  # the check itself fails; only the checkout is asserted.
+  pull-request-checkout:
+    name: Checks out the pull request head
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Run action
+        continue-on-error: true
+        uses: ./check-changelog
+        with:
+          labels: '[]'
+      - name: Assert the head and base were fetched
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          actual="$(git -C target-repo rev-parse HEAD)"
+          if [[ "$actual" != "$HEAD_SHA" ]]; then
+            echo "::error::Expected HEAD $HEAD_SHA, got $actual"
+            exit 1
+          fi
+          git -C target-repo rev-parse --verify --quiet "refs/remotes/origin/$BASE_REF" >/dev/null
+
   # End to end against a merged ocap-kernel pull request whose pre-merge head
-  # changed a public package and added a changelog entry linking it.
+  # changed a public package and added a changelog entry linking it. The action
+  # only checks out the repository it runs in, so this checks out ocap-kernel
+  # the same way and runs the script directly.
   ocap-kernel:
     name: ocap-kernel PR (pr-number ${{ matrix.pr-number }})
     runs-on: ubuntu-latest
@@ -70,19 +121,29 @@ jobs:
         with:
           path: actions-repo
           persist-credentials: false
-      - name: Run action
-        id: action
-        continue-on-error: true
-        uses: ./actions-repo/check-changelog
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          base-branch: main
-          head-ref: refs/pull/1290/head
-          labels: '[{"name": "bug"}]'
-          pr-number: ${{ matrix.pr-number }}
-          repo: Consensys-Incorporated/ocap-kernel
+          repository: Consensys-Incorporated/ocap-kernel
+          ref: refs/pull/1290/head
+          path: target-repo
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Install check dependencies
+        working-directory: actions-repo/check-changelog
+        run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+      - name: Run script
+        id: script
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ matrix.pr-number }}
+        run: node actions-repo/check-changelog/scripts/check-changelog.ts target-repo main "$PR_NUMBER"
       - name: Assert outcome
         env:
-          OUTCOME: ${{ steps.action.outcome }}
+          OUTCOME: ${{ steps.script.outcome }}
           EXPECTED: ${{ matrix.expected }}
         run: |
           if [[ "$OUTCOME" != "$EXPECTED" ]]; then

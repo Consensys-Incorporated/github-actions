@@ -22,29 +22,32 @@ jobs:
       contents: read
     steps:
       - uses: Consensys-Incorporated/github-actions/check-changelog@<sha> # <tag>
-        with:
-          base-branch: ${{ github.event.pull_request.base.ref }}
-          # Not github.head_ref: a fork's branch doesn't exist in this repository.
-          head-ref: refs/pull/${{ github.event.pull_request.number }}/head
-          labels: ${{ toJSON(github.event.pull_request.labels) }}
-          pr-number: ${{ github.event.pull_request.number }}
-          repo: ${{ github.repository }}
 ```
+
+The action fails on any event other than `pull_request`. Don't call it from
+`pull_request_target`: that event runs with a write token and secrets, and this action reads the
+pull request's content.
+
+Migrating from an earlier version of this action: drop `head-ref` and `repo` from existing calls.
 
 ## Inputs
 
-| Input         | Default | Description                                                   |
-| ------------- | ------- | ------------------------------------------------------------- |
-| `base-branch` | `main`  | The branch the pull request targets.                          |
-| `head-ref`    |         | Required. The pull request head ref.                          |
-| `labels`      |         | Required. The pull request labels as JSON.                    |
-| `pr-number`   |         | Required. The pull request number.                            |
-| `repo`        |         | Required. The repository, `owner/name`.                       |
+All inputs are optional and default to values from the `pull_request` event.
+
+| Input         | Default                                         | Description                                                      |
+| ------------- | ----------------------------------------------- | ---------------------------------------------------------------- |
+| `base-branch` | `github.event.pull_request.base.ref`            | The branch the pull request targets.                             |
+| `labels`      | `toJSON(github.event.pull_request.labels)`      | The pull request labels as JSON.                                 |
+| `pr-number`   | `github.event.pull_request.number`              | The pull request number that changelog entries must link.        |
 
 ## What is checked
 
-The repository is checked out at `head-ref` into `target-repo/` and compared with the merge base
-of `origin/<base-branch>`.
+The workflow's repository is checked out at `refs/pull/<number>/head` (the event's pull request
+number) into `target-repo/` with full history, and compared with the merge base of
+`origin/<base-branch>`. GitHub mirrors every pull request's head into the base repository under
+that ref, so this works for pull requests from forks too. Before any checkout, the action fails
+if the event is not `pull_request`, if the event has no pull request number, if `pr-number` is
+not a number, or if `base-branch` is empty.
 
 **Monorepo** (root `package.json` has a `workspaces` array): each changed file is mapped to a
 package through the workspace patterns that contain `*`: the package directory is the prefix
@@ -72,6 +75,13 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
   stripping and `npm ci --ignore-scripts --omit=dev`, instead of checking out `github-tools` and
   running `yarn` and `ts-node`. The `github-tools-repository` and `github-tools-ref` inputs are
   removed.
+- The `head-ref` and `repo` inputs are removed. Callers passed `head-ref: ${{ github.head_ref }}`
+  with `repo: ${{ github.repository }}`, and for a pull request from a fork `github.head_ref` is
+  the fork's branch name, so the action checked out a branch of that name from the base
+  repository: an unrelated branch, or none. The action now always checks out
+  `refs/pull/<number>/head` from `github.repository`, and fails on events other than
+  `pull_request`. `base-branch`, `labels` and `pr-number` default to the event's values instead of
+  being required (`base-branch` defaulted to `main`).
 - The target repository is checked out with `persist-credentials: false`. If the script's
   `git fetch origin <base-branch>` fails (as it does for a private repository without
   credentials), it uses `origin/<base-branch>` from the full-history checkout, with a warning.
@@ -114,8 +124,11 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
 ## Security
 
 The action installs its own pinned dependencies (`package-lock.json`) at run time, without
-install scripts. It reads, but never runs, code from the target repository. Use it in
-`pull_request` workflows with a read-only token. The runner does not process workflow commands
+install scripts. It reads, but never runs, code from the pull request. Use it in `pull_request`
+workflows with a read-only token, never from `pull_request_target`. The content of a pull request
+from a fork reaches the script, so it is untrusted: this is why the script stops workflow
+commands, refuses symbolic links, lists changed files NUL-separated (`git diff -z`), and the
+checkout does not persist credentials. The runner does not process workflow commands
 in the check script's output (see above), so text from the pull request can't add annotations or
 change the step's environment. The script does not read files through symbolic links (see
 above), so a pull request can't make it show the contents of other files on the runner.
@@ -133,7 +146,10 @@ test/fixtures.sh      # end-to-end runs against fixture git repositories
 The fixture tests also fail if any output line, split on `\r` as well as `\n`, would be taken as
 a workflow command other than the script's own.
 
-`.github/workflows/test_check-changelog.yml` runs these, checks that the `no-changelog` label
-skips the checkout, and runs the action against a merged `Consensys-Incorporated/ocap-kernel`
-pull request. Run against upstream's script, the fixture tests pass or fail the same way except
+`.github/workflows/test_check-changelog.yml` runs these and, on this repository's own pull
+requests, runs the action to check that the `no-changelog` label skips the checkout and that the
+pull request head (from a fork too) and the base branch are fetched. On `push` and
+`workflow_dispatch` it checks that the action fails without checking anything out. It also checks
+out a merged `Consensys-Incorporated/ocap-kernel` pull request at `refs/pull/1290/head`, as the
+action would in that repository, and runs the script against it. Run against upstream's script, the fixture tests pass or fail the same way except
 in the cases covering the differences listed above.

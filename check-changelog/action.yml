@@ -8,25 +8,49 @@ description: >-
 
 inputs:
   base-branch:
-    description: 'The branch the pull request targets.'
+    description: 'The branch the pull request targets. Defaults to the event''s base branch.'
     required: false
-    default: main
-  head-ref:
-    description: 'The pull request head ref to check out.'
-    required: true
+    default: ${{ github.event.pull_request.base.ref }}
   labels:
-    description: 'The pull request labels, as JSON (`toJSON(github.event.pull_request.labels)`).'
-    required: true
+    description: 'The pull request labels, as JSON. Defaults to the event''s labels.'
+    required: false
+    default: ${{ toJSON(github.event.pull_request.labels) }}
   pr-number:
-    description: 'The pull request number.'
-    required: true
-  repo:
-    description: 'The repository to check (`owner/name`).'
-    required: true
+    description: 'The pull request number that changelog entries must link. Defaults to the event''s.'
+    required: false
+    default: ${{ github.event.pull_request.number }}
 
 runs:
   using: composite
   steps:
+    # The checkout below uses the event's pull request number, so the event
+    # must be pull_request. pull_request_target would run with a write token
+    # and secrets while reading the pull request's content.
+    - name: Check event
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        BASE_BRANCH: ${{ inputs.base-branch }}
+      run: |
+        if [[ "$EVENT_NAME" != pull_request ]]; then
+          echo "::error::check-changelog runs only on pull_request events, not $EVENT_NAME."
+          exit 1
+        fi
+        if [[ ! "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::The pull_request event has no pull request number."
+          exit 1
+        fi
+        if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::The pr-number input must be a pull request number."
+          exit 1
+        fi
+        if [[ -z "$BASE_BRANCH" ]]; then
+          echo "::error::The base-branch input is empty."
+          exit 1
+        fi
+
     - name: Check for no-changelog label
       id: label-check
       shell: bash
@@ -41,12 +65,14 @@ runs:
           echo "skip=false" >>"$GITHUB_OUTPUT"
         fi
 
-    - name: Check out target repository
+    - name: Check out pull request head
       if: ${{ steps.label-check.outputs.skip != 'true' }}
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        repository: ${{ inputs.repo }}
-        ref: ${{ inputs.head-ref }}
+        # GitHub mirrors every pull request's head, from a fork too, into the
+        # base repository under this ref.
+        repository: ${{ github.repository }}
+        ref: refs/pull/${{ github.event.pull_request.number }}/head
         path: target-repo
         fetch-depth: 0
         persist-credentials: false
