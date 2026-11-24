@@ -5,7 +5,7 @@
 # npm yet. Run after sanitize.sh.
 #
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
-# REPOSITORY_VISIBILITY, GH_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, and
+# REPOSITORY_VISIBILITY, GH_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, PACK_DIR, and
 # YARN_RC_FILENAME / YARN_IGNORE_PATH from sanitize.sh.
 
 set -euo pipefail
@@ -15,6 +15,12 @@ if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
 fi
 
 script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Tarballs go here, not /tmp, so that only this run's packages are reported
+# and uploaded.
+export PACK_DIR="${PACK_DIR:-${RUNNER_TEMP:-/tmp}/npm-publish-packages}"
+rm -rf -- "$PACK_DIR"
+mkdir -p "$PACK_DIR"
 
 # shellcheck source=SCRIPTDIR/environment.sh
 source "$script_path/environment.sh"

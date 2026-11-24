@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# For each packed tarball in /tmp, writes an HTML diff against the package's
+# For each packed tarball in $PACK_DIR, writes an HTML diff against the package's
 # latest version on npm with pkdiff. A package not yet on npm has nothing to
 # diff against; that failure is ignored.
 
@@ -11,9 +11,9 @@ if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
   set -x
 fi
 
-directory="/tmp"
+: "${PACK_DIR:?PACK_DIR must be set}"
 
-for file in "$directory"/*.tgz; do
+for file in "$PACK_DIR"/*.tgz; do
   [[ -f "$file" ]] || continue
   echo "Processing $file"
   name="$(tar -O -zxf "$file" package/package.json | jq --raw-output .name)"
@@ -21,5 +21,5 @@ for file in "$directory"/*.tgz; do
   pkdiff "$file" "$name@latest" \
     --no-exit-code \
     --no-open \
-    --output "$directory/$(basename "$file").html" || true
+    --output "$PACK_DIR/$(basename "$file").html" || true
 done

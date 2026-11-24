@@ -16,8 +16,8 @@
 #      - without OIDC: pack, or fail if DRY_RUN=false.
 #
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
-# ACTIONS_ID_TOKEN_REQUEST_URL, REPOSITORY_VISIBILITY, GITHUB_OUTPUT,
-# GITHUB_STEP_SUMMARY.
+# ACTIONS_ID_TOKEN_REQUEST_URL, REPOSITORY_VISIBILITY, PACK_DIR (where to
+# write tarballs), GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
 
 set -euo pipefail
 
@@ -31,6 +31,7 @@ script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$script_path/environment.sh"
 
 DRY_RUN="${DRY_RUN:-}"
+: "${PACK_DIR:?PACK_DIR must be set}"
 YARN_NPM_AUTH_TOKEN="${YARN_NPM_AUTH_TOKEN:-}"
 
 package_version="$(jq --raw-output .version package.json)"
@@ -88,10 +89,10 @@ if [[ "$DRY_RUN" != "true" ]]; then
   exit 0
 fi
 
-yarn pack --out "/tmp/%s-%v.tgz"
+yarn pack --out "$PACK_DIR/%s-%v.tgz"
 
 # Yarn's %s is the package name with "/" replaced by "-"; a scope's "@" stays.
-tarball="/tmp/${package_name//\//-}-$package_version.tgz"
+tarball="$PACK_DIR/${package_name//\//-}-$package_version.tgz"
 checksum="$(shasum -a 1 "$tarball" | cut -d' ' -f1)"
 integrity="sha512-$(openssl dgst -sha512 -binary "$tarball" | openssl base64 -A)"
 

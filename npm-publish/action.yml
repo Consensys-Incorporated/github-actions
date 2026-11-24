@@ -64,18 +64,23 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         GH_TOKEN: ${{ github.token }}
+        PACK_DIR: ${{ runner.temp }}/npm-publish-packages
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/main.sh"'
 
+    # Run from /tmp, so that no .npmrc in the repository applies.
     - name: Install pkdiff
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
+      working-directory: /tmp
       run: npm i -g pkdiff@2.0.1
 
     - name: Generate package diff report
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
+      working-directory: /tmp
       env:
+        PACK_DIR: ${{ runner.temp }}/npm-publish-packages
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/report.sh"'
 
@@ -83,9 +88,13 @@ runs:
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
+        name: npm-publish-dry-run-${{ github.sha }}
+        # Names are unique per workflow run; a second dry run in the same run
+        # replaces the first one's artifact instead of failing.
+        overwrite: true
         path: |
-          /tmp/*.tgz
-          /tmp/*.html
+          ${{ runner.temp }}/npm-publish-packages/*.tgz
+          ${{ runner.temp }}/npm-publish-packages/*.html
 
     - name: Generate Slack payload
       id: slack-payload
