@@ -21,6 +21,9 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
+  pr-number:
+    description: 'The pull request number, if the pull request was found.'
+    value: ${{ steps.pr-details.outputs.pr-number }}
   up-to-date:
     description: >-
       `true` if the pull request is first in the merge queue and up to date

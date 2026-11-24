@@ -9,7 +9,8 @@
 /**
  * Finds the pull request a merge-group head ref belongs to and its position in
  * the merge queue. Sets the `pr-number`, `pr-head-sha` and
- * `merge-queue-position` outputs, or fails the step.
+ * `merge-queue-position` outputs, or fails the step. `pr-number` is set as soon
+ * as the pull request is found.
  *
  * @param {object} args
  * @param {object} args.github - Octokit client.
@@ -28,25 +29,32 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
 
   const number = parseInt(match[1], 10);
   const { owner, repo } = context.repo;
-  const result = await github.graphql(
-    `
-      query($owner: String!, $name: String!, $number: Int!) {
-        repository(owner: $owner, name: $name) {
-          pullRequest(number: $number) {
-            headRefOid
-            mergeQueueEntry { position }
+  let result;
+  try {
+    result = await github.graphql(
+      `
+        query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              headRefOid
+              mergeQueueEntry { position }
+            }
           }
         }
-      }
-    `,
-    { owner, name: repo, number },
-  );
+      `,
+      { owner, name: repo, number },
+    );
+  } catch (error) {
+    core.setFailed(`Could not look up pull request #${number} in "${owner}/${repo}": ${error.message}`);
+    return;
+  }
 
-  const pullRequest = result.repository.pullRequest;
+  const pullRequest = result?.repository?.pullRequest;
   if (!pullRequest) {
     core.setFailed(`Pull request #${number} not found in repository "${owner}/${repo}".`);
     return;
   }
+  core.setOutput('pr-number', number);
 
   const position = pullRequest.mergeQueueEntry?.position;
   if (!position) {
@@ -54,7 +62,6 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
     return;
   }
 
-  core.setOutput('pr-number', number);
   core.setOutput('pr-head-sha', pullRequest.headRefOid);
   core.setOutput('merge-queue-position', position);
 }
