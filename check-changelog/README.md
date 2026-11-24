@@ -71,6 +71,8 @@ starting with `}` after it, and only the first `"devDependencies":` is considere
   `git fetch origin <base-branch>` fails (as it does for a private repository without
   credentials), it uses `origin/<base-branch>` from the full-history checkout, with a warning.
 - `execa` is replaced by `node:child_process`.
+- Changed files are listed with `core.quotePath` off, so a path with non-ASCII characters still
+  maps to its package.
 
 ## Security
 
