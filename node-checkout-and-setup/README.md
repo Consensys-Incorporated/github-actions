@@ -25,9 +25,9 @@ and replaces
   the action fails with a clear error if such a workspace has no `.nvmrc`. Upstream downloaded a
   missing `.nvmrc`, `package.json` or `yarn.lock` there from `ref` or the triggering commit,
   which may differ from the commit checked out, and could install from that `yarn.lock`.
-- The action fails with a clear error when there is no root `yarn.lock` (unless
-  `skip-install`). Without one, upstream's cache keys end in an empty hash, which matches other
-  entries by prefix.
+- The action fails with a clear error when there is no root `yarn.lock` or `package.json`
+  (unless `skip-install`). Without a `yarn.lock`, upstream's cache keys end in an empty hash,
+  which matches other entries by prefix; without a `package.json`, Corepack runs its default Yarn.
 - When the workspace is already a git repository, the action does not check out, and warns if
   `ref` or `persist-credentials: true` is given. Upstream ignored them silently.
 
@@ -92,15 +92,15 @@ jobs:
    is downloaded into a workspace that is already a git repository: its files belong to the
    commit checked out, which may differ from `ref` or the triggering commit. There, without
    `node-version`, the action fails if there is no `.nvmrc`. Without a root `package.json`, the
-   cache paths fall back to `**/node_modules`, as when a download fails. Such a workspace is not
-   a Yarn 4 project the action can install; if it also has no `yarn.lock`, the action fails at
-   the `yarn.lock` check below.
+   cache paths fall back to `**/node_modules`, as when a download fails, and unless
+   `skip-install` the action then fails at the check below.
 2. With `cache-node-modules` in a low-risk job, look up the cache key without downloading. On a
    hit, the job's purpose (warming the cache) is met and the remaining steps are skipped.
 3. If the workspace is not a git repository (has no `.git`), check out `ref` with
    `fetch-depth: 1` and `persist-credentials`. Otherwise leave the workspace as it is, and warn if
    `ref` (which then has no effect) or `persist-credentials: true` is given. Unless
-   `skip-install`, fail if there is no root `yarn.lock`. Set up Node.js, `corepack enable`.
+   `skip-install`, fail if there is no root `yarn.lock` or `package.json`. Set up Node.js,
+   `corepack enable`.
 4. Low-risk: restore `node_modules` from the cache. On a hit, run `yarn allow-scripts` if it is
    installed. On a miss, restore Yarn's download cache with `actions/setup-node` and install.
 5. High-risk: install, with no cache.

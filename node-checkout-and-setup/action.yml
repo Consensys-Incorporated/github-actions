@@ -163,15 +163,18 @@ runs:
         persist-credentials: ${{ inputs.persist-credentials }}
 
     # Without a lockfile, the cache keys below would end in an empty hash and
-    # match other entries by prefix, and the install would fail later anyway.
-    - name: Require yarn.lock
+    # match other entries by prefix. Without a root package.json, Corepack
+    # would run its default Yarn rather than the project's.
+    - name: Require yarn.lock and package.json
       if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
       shell: bash
       run: |
-        if [[ ! -f yarn.lock ]]; then
-          echo "::error::No yarn.lock in the workspace root. Set skip-install to true to only set up Node.js."
-          exit 1
-        fi
+        for file in yarn.lock package.json; do
+          if [[ ! -f "$file" ]]; then
+            echo "::error::No $file in the workspace root. Set skip-install to true to only set up Node.js."
+            exit 1
+          fi
+        done
 
     - name: Resolve Node.js release
       id: resolve-node-version

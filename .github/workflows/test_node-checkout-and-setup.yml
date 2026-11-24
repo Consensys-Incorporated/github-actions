@@ -668,18 +668,24 @@ jobs:
   # A checked-out tree without a root yarn.lock fails before Node.js is set up,
   # rather than installing from a yarn.lock downloaded from another ref.
   pre-checked-out-without-yarn-lock:
-    name: Pre-checked-out workspace without yarn.lock fails
+    name: Pre-checked-out workspace without ${{ matrix.file }} fails
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        file: [yarn.lock, package.json]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: actions-repo
           persist-credentials: false
-      - name: Prepare fixture workspace without yarn.lock
+      - name: Prepare fixture workspace without ${{ matrix.file }}
+        env:
+          FILE: ${{ matrix.file }}
         run: |
           actions-repo/node-checkout-and-setup/test/prepare-workspace.sh
-          git rm -q yarn.lock
-          git commit -q -m "Remove yarn.lock"
+          git rm -q "$FILE"
+          git commit -q -m "Remove $FILE"
       - name: Run action
         id: action
         continue-on-error: true
@@ -688,19 +694,20 @@ jobs:
           is-high-risk-environment: false
           cache-node-modules: true
           node-version: 24.x
-          # A ref whose root has a yarn.lock, which must not be downloaded.
+          # A ref whose root has the file, which must not be downloaded.
           ref: ${{ env.FIXTURE_BRANCH }}
-      - name: Assert failure before Node.js setup, with no yarn.lock
+      - name: Assert failure before Node.js setup, with no ${{ matrix.file }}
         env:
+          FILE: ${{ matrix.file }}
           OUTCOME: ${{ steps.action.outcome }}
           NODE_VERSION: ${{ steps.action.outputs.node-version }}
           CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
         run: |
           [[ "$OUTCOME" == "failure" ]]
-          # The "Require yarn.lock" step runs right after the checkout step and
-          # before setup-node, which sets node-version.
+          # The "Require yarn.lock and package.json" step runs right after
+          # the checkout step and before setup-node, which sets node-version.
           [[ -z "$NODE_VERSION" && "$CACHE_HIT" == "false" ]]
-          test ! -e yarn.lock
+          test ! -e "$FILE"
           test ! -e node_modules
 
   pre-checked-out:
