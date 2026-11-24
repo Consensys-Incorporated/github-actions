@@ -102,6 +102,10 @@ fails the action before anything else runs.
    upload the tarballs and reports as the
    `npm-publish-dry-run-<sha>` artifact.
 
+The Sanitize step's changes outlast the job on a runner that is reused (self-hosted): it doesn't
+restore `~/.yarnrc.yml`, remove the generated `.yarnrc-<random>.yml` from the checkout's parent
+directory, or restore the lifecycle scripts it removed from the checkout's manifests.
+
 ## Differences from upstream
 
 - `staged-publish` and `provenance` are removed: OIDC publishes are always staged, with
