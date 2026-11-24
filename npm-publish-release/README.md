@@ -57,6 +57,12 @@ variable.
 
 ## Behavior
 
+The action reads the working tree, at the root of the repository, but the release is `HEAD`:
+every file it reads (`package.json` files, changelogs, `release.config.json`) must be a regular
+file committed at `HEAD`, with no staged or unstaged changes. In a monorepo, no `package.json`
+committed at `HEAD` may be missing from the working tree. Otherwise it fails before creating
+anything.
+
 1. Read the root `package.json`: `version` (must be valid SemVer) and `repository.url` (must be
    `https:` or `git+https:`).
 2. **Single package** (no `workspaces`): the notes are the body of the `## [<version>]` section
@@ -107,6 +113,8 @@ heading or the first link reference definition, with blank lines trimmed at both
 - An existing release `v<version>` at the release commit is kept instead of failing `gh release
   create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
   can finish a release whose tag push failed.
+- The action fails if a file it reads is not committed at `HEAD` or has uncommitted changes.
+  Upstream read the working tree as it was.
 - `repository.url` may also be a `git+https:` URL, the form npm normalizes it to.
   Upstream required `https:`.
 - Only the new tags are pushed, by name, instead of `git push --tags`, to `GITHUB_SERVER_URL`
@@ -133,5 +141,6 @@ heading or the first link reference definition, with blank lines trimmed at both
 
 `test/fixtures.sh` tests the scripts against fixture repositories with `gh` and `git push`
 replaced by shims. `.github/workflows/test_npm-publish-release.yml` runs it, runs the action in a
-fixture workspace (with a `BASH_ENV` set by an earlier step, which must not run), and checks parity with the published `v7.0.0` release of
-`Consensys-Incorporated/ocap-kernel`.
+fixture workspace committed over a checkout of this repository (passing that commit as
+`release-commit`, with a `BASH_ENV` set by an earlier step, which must not run), and checks
+parity with the published `v7.0.0` release of `Consensys-Incorporated/ocap-kernel`.

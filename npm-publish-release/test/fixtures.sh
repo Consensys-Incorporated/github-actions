@@ -144,6 +144,13 @@ commit_all() {
   git commit -q -m "Release"
 }
 
+# commit_changes: commits every change in the current repository, as the
+# release commit.
+commit_changes() {
+  git add -A
+  git commit -q -m "Change"
+}
+
 # The main monorepo fixture: a and b are released; c is already tagged; d is
 # private; e is at 0.0.0.
 monorepo_fixture() {
@@ -424,6 +431,7 @@ test_missing_section() {
   (
     monorepo_fixture "$dir"
     changelog packages/b/CHANGELOG.md 1.0.0 '- Initial release'
+    commit_changes
   )
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "missing changelog section fails" "packages/b/CHANGELOG.md has no section for 2.0.0"
@@ -453,32 +461,32 @@ test_lookup_error() {
 test_config_errors() {
   local dir
   dir="$WORK/fixed"
-  (monorepo_fixture "$dir" && echo '{"versioningStrategy": "fixed"}' >release.config.json)
+  (monorepo_fixture "$dir" && echo '{"versioningStrategy": "fixed"}' >release.config.json && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "versioningStrategy fixed fails" "Only 'independent' is supported"
 
   dir="$WORK/no-config"
-  (monorepo_fixture "$dir" && git rm -q release.config.json)
+  (monorepo_fixture "$dir" && git rm -q release.config.json && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "monorepo without release.config.json fails" "release.config.json not found"
 
   dir="$WORK/globstar"
-  (monorepo_fixture "$dir" && root_manifest 3.0.0 '["packages/**"]')
+  (monorepo_fixture "$dir" && root_manifest 3.0.0 '["packages/**"]' && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "workspaces packages/** fails" "Unsupported workspace pattern 'packages/**'"
 
   dir="$WORK/bad-version"
-  (monorepo_fixture "$dir" && root_manifest 3.0 '["packages/*"]')
+  (monorepo_fixture "$dir" && root_manifest 3.0 '["packages/*"]' && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "invalid root version fails" "not a valid SemVer version"
 
   dir="$WORK/bad-url"
-  (monorepo_fixture "$dir" && jq '.repository.url = "git@github.com:octo/repo.git"' package.json >p && mv p package.json)
+  (monorepo_fixture "$dir" && jq '.repository.url = "git@github.com:octo/repo.git"' package.json >p && mv p package.json && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "non-https repository URL fails" "must be an https: or git+https: URL"
 
   dir="$WORK/git-https-url"
-  (monorepo_fixture "$dir" && jq '.repository.url = "git+https://github.com/octo/repo.git"' package.json >p && mv p package.json)
+  (monorepo_fixture "$dir" && jq '.repository.url = "git+https://github.com/octo/repo.git"' package.json >p && mv p package.json && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   if ((PREPARE_STATUS == 0)) && grep -qxF "Repository: https://github.com/octo/repo" <<<"$PREPARE_LOG"; then
     pass "git+https repository URL is accepted"
@@ -487,17 +495,17 @@ test_config_errors() {
   fi
 
   dir="$WORK/bad-name"
-  (monorepo_fixture "$dir" && pkg packages/a '@octo/a?x' 1.1.0)
+  (monorepo_fixture "$dir" && pkg packages/a '@octo/a?x' 1.1.0 && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "invalid package name fails" "is not a valid npm package name"
 
   dir="$WORK/empty-section"
-  (monorepo_fixture "$dir" && printf '## [Unreleased]\n\n## [2.0.0]\n\n## [1.0.0]\n\n- Initial release\n' >packages/b/CHANGELOG.md)
+  (monorepo_fixture "$dir" && printf '## [Unreleased]\n\n## [2.0.0]\n\n## [1.0.0]\n\n- Initial release\n' >packages/b/CHANGELOG.md && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "empty changelog section fails" "packages/b/CHANGELOG.md has an empty section for 2.0.0"
 
   dir="$WORK/duplicate"
-  (monorepo_fixture "$dir" && pkg packages/z @octo/a 9.9.9)
+  (monorepo_fixture "$dir" && pkg packages/z @octo/a 9.9.9 && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "duplicate workspace names fail" "Duplicate workspace name @octo/a"
 }
@@ -510,7 +518,7 @@ test_workflow_commands() {
     monorepo_fixture "$dir"
     changelog packages/a/CHANGELOG.md 1.1.0 $'- Entry\n::warning::from a line\n  ::warning::indented\n- x\r::warning::after CR\n##[warning]legacy' 1.0.0 '- Initial release'
     jq '.repository.url = "https://github.com/octo/repo\n::warning::from the URL"' package.json >p && mv p package.json
-    git commit -q -am "Injection"
+    commit_changes
   )
   run_prepare "$dir" "$dir.existing-tags"
   commands="$(workflow_commands "$PREPARE_LOG")"
@@ -521,7 +529,7 @@ test_workflow_commands() {
   fi
 
   dir="$WORK/commands-error"
-  (monorepo_fixture "$dir" && root_manifest $'3.0\n::warning::from the version' && git commit -q -am "Bad version")
+  (monorepo_fixture "$dir" && root_manifest $'3.0\n::warning::from the version' && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   commands="$(workflow_commands "$PREPARE_LOG")"
   if ((PREPARE_STATUS != 0)) && [[ "$commands" == "::error::The root package.json version '3.0%0A::warning::from the version' is not a valid SemVer version." ]]; then
@@ -531,7 +539,7 @@ test_workflow_commands() {
   fi
 
   dir="$WORK/commands-path"
-  (monorepo_fixture "$dir" && pkg $'packages/x\n::warning::from a path' @octo/x 1.0.0 && git add -A && git commit -q -m "Bad path")
+  (monorepo_fixture "$dir" && pkg $'packages/x\n::warning::from a path' @octo/x 1.0.0 && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
   commands="$(workflow_commands "$PREPARE_LOG")"
   if ((PREPARE_STATUS != 0)) && [[ "$commands" == "::error::Workspace path 'packages/x%0A::warning::from a path' contains a control character." ]]; then
@@ -539,6 +547,79 @@ test_workflow_commands() {
   else
     fail "workflow commands: workspace paths with control characters fail" "status $PREPARE_STATUS" "commands: $commands"
   fi
+}
+
+# expect_uncommitted_failure <name> <dir> <pattern>: runs prepare-release.sh
+# in <dir> and expects it to fail with <pattern> before exporting anything.
+expect_uncommitted_failure() {
+  local test_name="$1" dir="$2" pattern="$3"
+  run_prepare "$dir" "$dir.existing-tags"
+  if ((PREPARE_STATUS != 0)) && grep -qF -- "$pattern" <<<"$PREPARE_LOG" && [[ ! -s "$dir.out/github_env" ]]; then
+    pass "$test_name"
+  else
+    fail "$test_name" "status $PREPARE_STATUS, expected output containing: $pattern" "$PREPARE_LOG"
+  fi
+}
+
+# The scripts read the working tree, but the release is HEAD: every file they
+# read must be committed, unchanged.
+test_uncommitted() {
+  local dir
+
+  dir="$WORK/uncommitted-version"
+  (monorepo_fixture "$dir" && pkg packages/a @octo/a 1.2.0)
+  expect_uncommitted_failure "uncommitted workspace version fails" "$dir" \
+    "packages/a/package.json has uncommitted changes."
+
+  dir="$WORK/staged-root"
+  (monorepo_fixture "$dir" && root_manifest 4.0.0 && git add package.json)
+  expect_uncommitted_failure "staged root package.json fails" "$dir" "::error::package.json has uncommitted changes."
+
+  dir="$WORK/uncommitted-config"
+  (monorepo_fixture "$dir" && echo '{"versioningStrategy": "independent", "x": 1}' >release.config.json)
+  expect_uncommitted_failure "uncommitted release.config.json fails" "$dir" \
+    "release.config.json has uncommitted changes."
+
+  dir="$WORK/uncommitted-changelog"
+  (monorepo_fixture "$dir" && changelog packages/b/CHANGELOG.md 2.0.0 '- Not in HEAD' 1.0.0 '- Initial release')
+  expect_uncommitted_failure "uncommitted changelog fails" "$dir" "packages/b/CHANGELOG.md has uncommitted changes."
+
+  dir="$WORK/untracked-workspace"
+  (monorepo_fixture "$dir" && pkg packages/f @octo/f 1.0.0)
+  expect_uncommitted_failure "untracked workspace fails" "$dir" \
+    "packages/f/package.json is not a file committed at HEAD."
+
+  dir="$WORK/ignored-workspace"
+  (monorepo_fixture "$dir" && echo 'packages/f/' >.gitignore && commit_changes && pkg packages/f @octo/f 1.0.0)
+  expect_uncommitted_failure "ignored workspace fails" "$dir" \
+    "packages/f/package.json is not a file committed at HEAD."
+
+  dir="$WORK/deleted-workspace"
+  (monorepo_fixture "$dir" && mv packages/b "$dir.b")
+  expect_uncommitted_failure "workspace missing from the working tree fails" "$dir" \
+    "package.json files committed at HEAD are missing from the working tree."
+
+  dir="$WORK/symlinked-manifest"
+  (
+    monorepo_fixture "$dir"
+    mv packages/a/package.json "$dir.a.json"
+    ln -s "$dir.a.json" packages/a/package.json
+    commit_changes
+  )
+  expect_uncommitted_failure "manifest committed as a symlink fails" "$dir" \
+    "packages/a/package.json is not a file committed at HEAD."
+
+  dir="$WORK/uncommitted-polyrepo"
+  mkdir -p "$dir"
+  (
+    cd "$dir"
+    jq -n '{name: "@octo/single", version: "1.2.0", repository: {url: "https://github.com/octo/repo"}}' >package.json
+    changelog CHANGELOG.md 1.1.0 '- Old thing'
+    commit_all
+    changelog CHANGELOG.md 1.2.0 '- Not in HEAD' 1.1.0 '- Old thing'
+  )
+  : >"$dir.existing-tags"
+  expect_uncommitted_failure "polyrepo: uncommitted changelog fails" "$dir" "CHANGELOG.md has uncommitted changes."
 }
 
 test_head_mismatch() {
@@ -689,6 +770,7 @@ test_nothing_to_release
 test_lookup_error
 test_config_errors
 test_workflow_commands
+test_uncommitted
 test_head_mismatch
 test_rerun
 test_rerun_conflicts

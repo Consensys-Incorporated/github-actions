@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Determines the release version, the released packages (monorepo) and the
-# release notes, in the current directory. Runs no Yarn, npm or Node.js.
+# release notes, in the current directory, the root of a Git repository. Every
+# file it reads must be committed at HEAD without changes. Runs no Yarn, npm or
+# Node.js.
 #
 # Environment:
 #   GH_TOKEN, GITHUB_REPOSITORY: for the tag lookups
@@ -27,6 +29,7 @@ notes_file="$RELEASE_DIR/notes.md"
 packages_file="$RELEASE_DIR/packages.tsv"
 : >"$packages_file"
 
+require_committed package.json
 release_version="$(jq -r '.version // empty' package.json)"
 if ! is_semver "$release_version"; then
   echo "::error::The root package.json version '$(escape_data "$release_version")' is not a valid SemVer version."
@@ -51,6 +54,7 @@ if [[ "$(jq 'has("workspaces")' package.json)" != "true" ]]; then
     echo "::error::CHANGELOG.md not found."
     exit 1
   fi
+  require_committed CHANGELOG.md
   if ! changelog_section CHANGELOG.md "$release_version" >"$notes_file"; then
     echo "::error::CHANGELOG.md has no section for $release_version."
     exit 1
@@ -63,6 +67,7 @@ else
     echo "::error::release.config.json not found. Monorepos must set {\"versioningStrategy\": \"independent\"}; fixed versioning is not supported."
     exit 1
   fi
+  require_committed release.config.json
   strategy="$(jq -r '.versioningStrategy // empty' release.config.json)"
   if [[ "$strategy" != "independent" ]]; then
     echo "::error::release.config.json versioningStrategy is '$(escape_data "$strategy")'. Only 'independent' is supported."
@@ -70,6 +75,18 @@ else
   fi
 
   workspaces="$(list_workspaces .)"
+
+  # Workspaces are listed from the working tree. Each listed one must be
+  # committed, and none committed at HEAD may be missing from the working tree.
+  while IFS= read -r location; do
+    if [[ "$location" != "." ]]; then
+      require_committed "$location/package.json"
+    fi
+  done <<<"$workspaces"
+  if ! git diff --quiet --no-renames --diff-filter=D HEAD -- ':(glob)**/package.json'; then
+    echo "::error::package.json files committed at HEAD are missing from the working tree. The release is HEAD, so the files it is made from must be committed."
+    exit 1
+  fi
 
   # tag_exists <tag>: 0 if it exists, 1 if not (HTTP 404); exits on other errors.
   tag_exists() {
@@ -138,6 +155,7 @@ else
       echo "::error::$changelog not found."
       exit 1
     fi
+    require_committed "$changelog"
     if ! section="$(changelog_section "$changelog" "$version")"; then
       echo "::error::$changelog has no section for $version."
       exit 1

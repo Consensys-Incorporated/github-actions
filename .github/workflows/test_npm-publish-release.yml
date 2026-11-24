@@ -22,8 +22,9 @@ jobs:
       - run: npm-publish-release/test/fixtures.sh
 
   # The action in a fixture monorepo workspace, with gh and git push shimmed.
-  # The fixture files are laid over a checkout of this repository, uncommitted,
-  # so that HEAD is github.sha as the action requires.
+  # The fixture files are laid over a checkout of this repository and
+  # committed, since the action requires the files it reads to be committed,
+  # and that commit is passed as the release commit.
   action:
     name: Action
     runs-on: ubuntu-latest
@@ -32,6 +33,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Prepare fixture workspace and shims
+        id: fixture
         run: |
           dir="$RUNNER_TEMP/fixture"
           npm-publish-release/test/fixtures.sh --prepare-workspace "$dir"
@@ -52,17 +54,24 @@ jobs:
           } >>"$GITHUB_ENV"
           git config user.name test
           git config user.email test@example.com
+          git add -A
+          git commit -q -m "Fixture release"
+          echo "commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
       - name: Run action
         id: action
         uses: ./npm-publish-release
+        with:
+          release-commit: ${{ steps.fixture.outputs.commit }}
       - name: Assert outputs, release and tags
         env:
           RELEASE_VERSION: ${{ steps.action.outputs.release-version }}
+          RELEASE_COMMIT: ${{ steps.fixture.outputs.commit }}
         run: |
           echo "release-version=$RELEASE_VERSION"
           [[ "$RELEASE_VERSION" == "3.0.0" ]]
           cat "$SHIM_LOG"
-          grep -q "^gh release create v3.0.0 --title 3.0.0 --notes-file .* --target $GITHUB_SHA\$" "$SHIM_LOG"
+          grep -q "^gh release create v3.0.0 --title 3.0.0 --notes-file .* --target $RELEASE_COMMIT\$" "$SHIM_LOG"
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_COMMIT" && "$RELEASE_COMMIT" != "$GITHUB_SHA" ]]
           grep -q '^git push https://x-access-token:.*@github.com/.* refs/tags/@octo/a@1.1.0 refs/tags/@octo/b@2.0.0$' "$SHIM_LOG"
           [[ "$(git tag --points-at HEAD | tr '\n' ' ')" == "@octo/a@1.1.0 @octo/b@2.0.0 " ]]
           if [[ -e "$RUNNER_TEMP/bash-env-ran" ]]; then

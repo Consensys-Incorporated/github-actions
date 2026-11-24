@@ -25,6 +25,27 @@ escape_data() {
   printf '%s' "$value"
 }
 
+# require_committed <path>...
+#
+# Fails unless each <path>, relative to the repository root (the current
+# directory), is a regular file at HEAD with no uncommitted changes in the
+# index or the working tree. The scripts read files from the working tree, and
+# what they read must be what HEAD releases.
+require_committed() {
+  local path entry
+  for path in "$@"; do
+    entry="$(git --literal-pathspecs ls-tree HEAD -- "$path")"
+    if [[ "$entry" != "100644 "* && "$entry" != "100755 "* ]]; then
+      echo "::error::$(escape_data "$path") is not a file committed at HEAD. The release is HEAD, so the files it is made from must be committed." >&2
+      return 1
+    fi
+    if ! git --literal-pathspecs diff --quiet HEAD -- "$path"; then
+      echo "::error::$(escape_data "$path") has uncommitted changes. The release is HEAD, so the files it is made from must be committed." >&2
+      return 1
+    fi
+  done
+}
+
 # workspace_children <root> <dir>
 #
 # Prints the directories (relative to <root>) matched by the "workspaces"
