@@ -1,0 +1,64 @@
+name: 'Publish Release'
+description: 'Publish the release'
+
+inputs:
+  npm-tag:
+    description: '(Deprecated) This option is no longer used, and will be removed in a future release'
+    required: false
+    default: 'latest'
+
+outputs:
+  release-version:
+    description: "The version associated with the new release, derived from the primary package's version."
+    value: ${{ steps.get-release-version.outputs.RELEASE_VERSION }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: get-version-strategy
+      shell: bash
+      run: |
+        RELEASE_STRATEGY=$([[ -f "release.config.json" ]] && jq --raw-output '.versioningStrategy // "fixed"' "release.config.json" || echo "fixed")
+        echo "RELEASE_STRATEGY=$RELEASE_STRATEGY" >> "$GITHUB_OUTPUT"
+    - id: get-release-version
+      shell: bash
+      run: echo "RELEASE_VERSION=$(jq --raw-output '.version' package.json)" >> "$GITHUB_OUTPUT"
+    - id: get-repository-url
+      shell: bash
+      run: echo "REPOSITORY_URL=$(jq --raw-output '.repository.url' package.json)" >> "$GITHUB_OUTPUT"
+    - id: get-workspaces
+      if: steps.get-version-strategy.outputs.RELEASE_STRATEGY == 'independent'
+      shell: bash
+      # This intentionally does not call Yarn, since that would run
+      # repository-controlled code (e.g., Yarn plugins) in a job that has
+      # access to the GitHub token in later steps.
+      run: node ${{ github.action_path }}/dist/workspaces/index.js > "$WORKSPACES_FILE"
+      env:
+        WORKSPACES_FILE: ${{ runner.temp }}/workspaces.json
+    - id: get-release-packages
+      if: steps.get-version-strategy.outputs.RELEASE_STRATEGY == 'independent'
+      shell: bash
+      run: ${{ github.action_path }}/scripts/get-release-packages.sh
+      env:
+        GH_TOKEN: ${{ env.GITHUB_TOKEN || github.token }}
+        WORKSPACES_FILE: ${{ runner.temp }}/workspaces.json
+    # This sets RELEASE_NOTES as an environment variable, which is expected
+    # by the create-github-release step.
+    - id: get-release-notes
+      shell: bash
+      run: node ${{ github.action_path }}/dist/index.js
+      env:
+        RELEASE_STRATEGY: ${{ steps.get-version-strategy.outputs.RELEASE_STRATEGY }}
+        RELEASE_VERSION: ${{ steps.get-release-version.outputs.RELEASE_VERSION }}
+        REPOSITORY_URL: ${{ steps.get-repository-url.outputs.REPOSITORY_URL }}
+        RELEASE_PACKAGES: ${{ steps.get-release-packages.outputs.RELEASE_PACKAGES }}
+    - id: create-github-release
+      shell: bash
+      run: |
+        ${{ github.action_path }}/scripts/create-github-release.sh
+      env:
+        GH_TOKEN: ${{ env.GITHUB_TOKEN || github.token }}
+        RELEASE_COMMIT_ID: ${{ github.sha }}
+        RELEASE_STRATEGY: ${{ steps.get-version-strategy.outputs.RELEASE_STRATEGY }}
+        RELEASE_VERSION: ${{ steps.get-release-version.outputs.RELEASE_VERSION }}
+        RELEASE_PACKAGES: ${{ steps.get-release-packages.outputs.RELEASE_PACKAGES }}
