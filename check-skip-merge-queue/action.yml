@@ -12,9 +12,9 @@ inputs:
     required: false
     default: ${{ github.event.merge_group.head_ref }}
   base-ref:
-    description: 'The base branch. Defaults to main.'
+    description: 'The base branch, with or without `refs/heads/`. Defaults to the base ref of the merge_group event.'
     required: false
-    default: main
+    default: ${{ github.event.merge_group.base_ref }}
   github-token:
     description: 'Token with `pull-requests: read` and `contents: read`.'
     required: false

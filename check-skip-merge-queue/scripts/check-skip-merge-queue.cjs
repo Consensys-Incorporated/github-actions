@@ -70,11 +70,17 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
  * @param {object} args.github - Octokit client.
  * @param {object} args.context - github-script context.
  * @param {object} args.core - @actions/core.
- * @param {string} args.baseRef - Base branch.
+ * @param {string} args.baseRef - Base branch, with or without `refs/heads/`.
  * @param {string} args.prHeadSha - Pull request head commit.
  * @param {string} args.mergeQueuePosition - Position, as a string.
  */
 async function checkUpToDate({ github, context, core, baseRef, prHeadSha, mergeQueuePosition }) {
+  const base = (baseRef ?? '').replace(/^refs\/heads\//u, '');
+  if (!base || !prHeadSha) {
+    core.setFailed(`Missing base branch ("${base}") or pull request head ("${prHeadSha}").`);
+    return;
+  }
+
   if (parseInt(mergeQueuePosition, 10) !== 1) {
     core.info(`Pull request is not first in the merge queue (position: ${mergeQueuePosition}).`);
     core.setOutput('up-to-date', 'false');
@@ -84,14 +90,14 @@ async function checkUpToDate({ github, context, core, baseRef, prHeadSha, mergeQ
   const comparison = await github.rest.repos.compareCommitsWithBasehead({
     owner: context.repo.owner,
     repo: context.repo.repo,
-    basehead: `${baseRef}...${prHeadSha}`,
+    basehead: `${base}...${prHeadSha}`,
   });
 
   if (comparison.data.status === 'identical' || comparison.data.status === 'ahead') {
-    core.info(`Pull request head ${prHeadSha} is up-to-date with base branch "${baseRef}".`);
+    core.info(`Pull request head ${prHeadSha} is up-to-date with base branch "${base}".`);
     core.setOutput('up-to-date', 'true');
   } else {
-    core.info(`Pull request head ${prHeadSha} is not up-to-date with base branch "${baseRef}".`);
+    core.info(`Pull request head ${prHeadSha} is not up-to-date with base branch "${base}".`);
     core.setOutput('up-to-date', 'false');
   }
 }
