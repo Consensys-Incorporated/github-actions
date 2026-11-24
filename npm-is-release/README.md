@@ -5,7 +5,7 @@ changed since the commit before the push, and, optionally, the commit message st
 a set of prefixes.
 
 Ported from [`MetaMask/action-is-release`](https://github.com/MetaMask/action-is-release) v2
-(MIT). Differences: prefixes are matched literally (upstream matched them as regular
+(MIT; see [NOTICE](NOTICE)). Differences: prefixes are matched literally (upstream matched them as regular
 expressions, so `Release 1.2.0` also matched `Release 1x2y0`); prefixes may also be separated by
 newlines, whitespace around them is trimmed and empty ones are ignored; the checkout does not
 persist credentials.
