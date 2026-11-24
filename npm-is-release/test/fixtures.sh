@@ -22,6 +22,9 @@ FAILURES="$WORK/failures"
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Command-scoped config from the caller's environment would show up in the
+# token tests.
+unset GIT_CONFIG_COUNT
 
 # shellcheck disable=SC2016 # Literal backticks.
 OCAP_PREFIXES='Release [version],Release v[version],Release/[version],Release/v[version],Release `[version]`'
@@ -60,7 +63,8 @@ expect() {
   local output_file="$WORK/$name.out" log status actual
   : >"$output_file"
   set +e
-  log="$(cd "$WORK/$name" && env GITHUB_OUTPUT="$output_file" COMMIT_STARTS_WITH= COMMIT_MESSAGE= "$@" "$SCRIPT" 2>&1)"
+  log="$(cd "$WORK/$name" && env GITHUB_OUTPUT="$output_file" COMMIT_STARTS_WITH= COMMIT_MESSAGE= GITHUB_TOKEN= GITHUB_SERVER_URL= \
+    RUNNER_DEBUG= "$@" "$SCRIPT" 2>&1)"
   status=$?
   set -e
   if ((status != 0)); then
@@ -145,33 +149,71 @@ expect true "multi-commit push compares with BEFORE, not HEAD^" multi BEFORE="${
 expect false "single-commit comparison with HEAD^" multi BEFORE="${shas[1]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES"
 
 # With a token, the fetch gets it as an Authorization header through
-# GIT_CONFIG_* (a file:// origin ignores the header, so a git shim records it).
-build_shas token '1.1.0|Initial' '1.2.0|Bump version' '1.2.0|Release 1.2.0 (#5)'
-clone token
+# GIT_CONFIG_* (a file:// origin ignores the header, so a git shim records the
+# config entries it was given).
 mkdir -p "$WORK/shims"
 cat >"$WORK/shims/git" <<EOF
 #!/usr/bin/env bash
 if [[ "\$1" == fetch ]]; then
-  echo "\${GIT_CONFIG_COUNT:-} \${GIT_CONFIG_KEY_1:-} \${GIT_CONFIG_VALUE_1:-}" >>"$WORK/git-fetch.log"
+  {
+    echo "count=\${GIT_CONFIG_COUNT:-}"
+    for ((i = 0; i < \${GIT_CONFIG_COUNT:-0}; i++)); do
+      key="GIT_CONFIG_KEY_\$i" value="GIT_CONFIG_VALUE_\$i"
+      echo "\$i: \${!key}=\${!value}"
+    done
+  } >>"$WORK/git-fetch.log"
 fi
-exec $(command -v git) "\$@"
+exec "$(command -v git)" "\$@"
 EOF
 chmod +x "$WORK/shims/git"
+TOKEN_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:secret' | base64 | tr -d '\n')"
+TOKEN_KEY="http.https://github.example/.extraheader"
+
+# check_fetch_log <name> <expected log>
+check_fetch_log() {
+  if [[ "$(cat "$WORK/git-fetch.log")" == "$2" ]]; then
+    echo "ok - $1"
+  else
+    echo "not ok - $1: got"
+    sed 's/^/    /' "$WORK/git-fetch.log"
+    echo "$1" >>"$FAILURES"
+  fi
+}
+
+build_shas token '1.1.0|Initial' '1.2.0|Bump version' '1.2.0|Release 1.2.0 (#5)'
+clone token
 : >"$WORK/git-fetch.log"
 expect true "multi-commit push with a token" token BEFORE="${shas[0]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES" \
   GITHUB_TOKEN=secret GITHUB_SERVER_URL=https://github.example PATH="$WORK/shims:$PATH"
-expected_header="2 http.https://github.example/.extraheader AUTHORIZATION: basic $(printf 'x-access-token:secret' | base64)"
-if [[ "$(cat "$WORK/git-fetch.log")" == "$expected_header" ]]; then
-  echo "ok - the token is passed to the fetch"
+check_fetch_log "the token is passed to the fetch, after a reset of the same key" \
+  "count=2
+0: $TOKEN_KEY=
+1: $TOKEN_KEY=$TOKEN_HEADER"
+
+build_shas token2 '1.1.0|Initial' '1.2.0|Bump version' '1.2.0|Release 1.2.0 (#5)'
+clone token2
+: >"$WORK/git-fetch.log"
+expect true "multi-commit push with a token and existing GIT_CONFIG_* entries" token2 BEFORE="${shas[0]}" \
+  GITHUB_TOKEN=secret GITHUB_SERVER_URL=https://github.example PATH="$WORK/shims:$PATH" \
+  GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.example GIT_CONFIG_VALUE_0=kept
+check_fetch_log "existing GIT_CONFIG_* entries are kept" \
+  "count=3
+0: core.example=kept
+1: $TOKEN_KEY=
+2: $TOKEN_KEY=$TOKEN_HEADER"
+
+# Under RUNNER_DEBUG the script traces commands, but not the credential.
+build_shas token3 '1.1.0|Initial' '1.2.0|Bump version' '1.2.0|Release 1.2.0 (#5)'
+clone token3
+trace="$(cd "$WORK/token3" && env GITHUB_OUTPUT="$WORK/token3.out" COMMIT_STARTS_WITH= COMMIT_MESSAGE= \
+  RUNNER_DEBUG=1 GITHUB_TOKEN=secret BEFORE="${shas[0]}" "$SCRIPT" 2>&1)"
+encoded="$(printf 'x-access-token:secret' | base64 | tr -d '\n')"
+if grep -q '^+ ' <<<"$trace" && ! grep '^+' <<<"$trace" | grep -qE "secret|$encoded"; then
+  echo "ok - the debug trace leaves out the token"
 else
-  echo "not ok - the token is passed to the fetch: got '$(cat "$WORK/git-fetch.log")'"
-  echo "token header" >>"$FAILURES"
-fi
-if git -C "$WORK/token" config --get-regexp 'extraheader' >/dev/null; then
-  echo "not ok - the token is not written to .git/config"
-  echo "token config" >>"$FAILURES"
-else
-  echo "ok - the token is not written to .git/config"
+  echo "not ok - the debug trace leaves out the token:"
+  while IFS= read -r line; do echo "    $line"; done <<<"$trace"
+  echo "debug trace" >>"$FAILURES"
 fi
 
 expect error "empty BEFORE" multi BEFORE=

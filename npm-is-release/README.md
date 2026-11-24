@@ -45,7 +45,7 @@ jobs:
 | `commit-starts-with` | `''`                         | Prefixes separated by commas or newlines; `[version]` is replaced by the new version. If empty, a version change alone makes a release. |
 | `commit-message`     | `''`                         | Message to check instead of the subject of the checked-out commit.                                                      |
 | `before`             | `${{ github.event.before }}` | The commit to compare with.                                                                                             |
-| `github-token`       | `${{ github.token }}`        | Used only to fetch `before` (private repositories, multi-commit pushes). Not stored in `.git/config`. |
+| `github-token`       | `${{ github.token }}`        | Used only to fetch `before` (private repositories, multi-commit pushes). Not stored in `.git/config`.                   |
 | `skip-checkout`      | `false`                      | Reuse the caller's checkout. `before` must be reachable or fetchable from it.                                           |
 
 ## Outputs

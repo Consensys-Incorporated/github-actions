@@ -31,22 +31,42 @@ fi
 
 # Fetch BEFORE in case the push contained more than one commit. The checkout
 # doesn't persist credentials, so a private repository needs the token. It is
-# passed through the environment for this one command (not argv, not
-# .git/config). The empty value first clears any header a caller's checkout
-# configured for the same URL, so only one Authorization header is sent.
+# exported in a subshell for this one command (not argv, not .git/config), as
+# config entries appended after any GIT_CONFIG_* entries already set. The empty
+# value first clears any header configured for the same URL key, as
+# actions/checkout's is, so only one Authorization header is sent. A header the
+# caller configured for a more specific URL (e.g. the repository's) takes
+# precedence over this one.
 fetch_before() {
-  if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    git fetch --quiet origin "$BEFORE"
-    return
+  # Keep the credential out of the RUNNER_DEBUG trace.
+  local xtrace=false
+  if [[ "$-" == *x* ]]; then
+    xtrace=true
+    set +x
   fi
-  local key auth
+  if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+    local status=0
+    git fetch --quiet origin "$BEFORE" || status=$?
+    if [[ "$xtrace" == true ]]; then
+      set -x
+    fi
+    return "$status"
+  fi
+  local key auth n status=0
   key="http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader"
   auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
   echo "::add-mask::$auth"
-  GIT_CONFIG_COUNT=2 \
-    GIT_CONFIG_KEY_0="$key" GIT_CONFIG_VALUE_0="" \
-    GIT_CONFIG_KEY_1="$key" GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $auth" \
+  n="${GIT_CONFIG_COUNT:-0}"
+  (
+    export GIT_CONFIG_COUNT=$((n + 2))
+    export "GIT_CONFIG_KEY_$n=$key" "GIT_CONFIG_VALUE_$n="
+    export "GIT_CONFIG_KEY_$((n + 1))=$key" "GIT_CONFIG_VALUE_$((n + 1))=AUTHORIZATION: basic $auth"
     git fetch --quiet origin "$BEFORE"
+  ) || status=$?
+  if [[ "$xtrace" == true ]]; then
+    set -x
+  fi
+  return "$status"
 }
 
 # BEFORE may still be present if the fetch fails (it is HEAD^ for a
