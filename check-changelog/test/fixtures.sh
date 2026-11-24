@@ -107,7 +107,39 @@ commit() {
   git commit -q -m change
 }
 
+# Prints each output line the runner would take as a workflow command, other
+# than the script's own: everything outside a ::stop-commands:: region except
+# its markers and the fetch-failure warning. Also complains if the output does
+# not start by stopping commands or does not end with them resumed. The runner
+# splits lines on \r as well as \n and ignores leading whitespace.
+stray_commands() {
+  local line token="" first=true
+  tr '\r' '\n' | {
+    while IFS= read -r line; do
+      line="${line#"${line%%[![:space:]]*}"}"
+      if [[ "$first" == true && "$line" != ::stop-commands::* ]]; then
+        echo "(output does not start with ::stop-commands::)"
+      fi
+      first=false
+      if [[ -n "$token" ]]; then
+        if [[ "$line" == "::$token::" ]]; then
+          token=""
+        fi
+      elif [[ "$line" == ::stop-commands::* ]]; then
+        token="${line#::stop-commands::}"
+      elif [[ "$line" == ::* && "$line" != "::warning::Could not fetch "* ]]; then
+        echo "$line"
+      fi
+    done
+    if [[ -n "$token" ]]; then
+      echo "(commands not resumed)"
+    fi
+  }
+}
+
 # expect <pass|fail> <name> [<string the output must contain>...]
+#
+# Also fails if stray_commands finds anything.
 expect() {
   local expected="$1" name="$2"
   shift 2
@@ -123,6 +155,12 @@ expect() {
   for pattern in "$@"; do
     grep -qF -- "$pattern" <<<"$output" || ok=false
   done
+  local stray
+  stray="$(stray_commands <<<"$output")"
+  if [[ -n "$stray" ]]; then
+    echo "    stray workflow commands: $stray"
+    ok=false
+  fi
   if [[ "$ok" == true ]]; then
     echo "ok - $name ($actual)"
   else
@@ -380,6 +418,49 @@ case_stale_base() {
   publish_base
   git checkout -q feature
   expect pass "base branch moved on after branching"
+}
+
+# Text from the pull request can contain \r, which starts a new line for the
+# runner. Here a changelog line, a version and a file path carry
+# \r::warning::injected; the output must show the text, but only where the
+# runner does not process commands.
+injected=$'\r::warning::injected'
+
+case_injected_changelog_line() {
+  monorepo "$WORK/injected-changelog-line"
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  changelog "$entry" | sed "s/^### Added\$/### Added$injected/" >packages/pub/CHANGELOG.md
+  commit
+  expect fail "changelog line with \\r::warning::" "Malformed category header" "::warning::injected"
+}
+
+case_injected_version() {
+  monorepo "$WORK/injected-version"
+  local json
+  json="$(package_json pub 1.1.0 false ^2.0.0)"
+  printf '%s\n' "${json/1.1.0/1.1$injected}" >packages/pub/package.json
+  changelog "$entry" >packages/pub/CHANGELOG.md
+  commit
+  expect fail "version with \\r::warning::" "is not valid semver" "::warning::injected"
+}
+
+case_injected_file_path() {
+  monorepo "$WORK/injected-file-path"
+  echo "export const y = 2;" >"packages/pub/src/a${injected}.ts"
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  commit
+  expect fail "file path with \\r::warning::" "Changelog check failed for package packages/pub"
+}
+
+# The script's own warning is emitted with commands resumed, and git's
+# multi-line error in it is escaped onto one line.
+case_fetch_fails() {
+  monorepo "$WORK/fetch-fails"
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  changelog "$entry" >packages/pub/CHANGELOG.md
+  commit
+  git remote set-url origin "$WORK/does-not-exist.git"
+  expect pass "base branch fetch fails" "::warning::Could not fetch main; using origin/main" "%0A"
 }
 
 case_single_repo_with_entry() {

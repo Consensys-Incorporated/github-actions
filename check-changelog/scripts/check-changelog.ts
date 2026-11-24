@@ -8,6 +8,7 @@
 
 import { parseChangelog } from '@metamask/auto-changelog';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import semver from 'semver';
@@ -26,12 +27,55 @@ type PackageInfo = { base: string; package: string };
 type ChangedPackage = PackageInfo & { newVersion?: string | undefined };
 
 /**
- * Logs an error message in red.
+ * The token that resumes workflow commands, while they are stopped.
+ */
+let stopToken: string | undefined;
+
+/**
+ * Stops the runner from processing workflow commands in the output, which
+ * includes text from the pull request (changelog lines, versions, paths). A
+ * `\r` in that text starts a new line for the runner, which could then be a
+ * `::command::`.
+ */
+function stopCommands(): void {
+  stopToken = randomUUID();
+  console.log(`::stop-commands::${stopToken}`);
+}
+
+/**
+ * Resumes workflow commands stopped by stopCommands.
+ */
+function resumeCommands(): void {
+  if (stopToken !== undefined) {
+    console.log(`::${stopToken}::`);
+    stopToken = undefined;
+  }
+}
+
+/**
+ * Emits a warning annotation. Commands are resumed around it, and the message
+ * is escaped so it stays on one line.
+ *
+ * @param message - The message.
+ */
+function logWarning(message: string): void {
+  const stopped = stopToken !== undefined;
+  resumeCommands();
+  const escaped = message.replace(/%/gu, '%25').replace(/\r/gu, '%0D').replace(/\n/gu, '%0A');
+  console.log(`::warning::${escaped}`);
+  if (stopped) {
+    stopCommands();
+  }
+}
+
+/**
+ * Logs an error message in red. It goes to stdout, like the rest of the
+ * output, so the runner sees it in order with the stop-commands markers.
  *
  * @param message - The message.
  */
 function logError(message: string): void {
-  console.error(`\x1b[31m${message}\x1b[0m`);
+  console.log(`\x1b[31m${message}\x1b[0m`);
 }
 
 /**
@@ -119,8 +163,8 @@ function getChangedFiles(repoPath: string, baseRef: string): string[] {
     // is usually present already.
     try {
       git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${baseRef}`]);
-      console.warn(
-        `::warning::Could not fetch ${baseRef}; using origin/${baseRef} from the checkout. ${errorMessage(error)}`,
+      logWarning(
+        `Could not fetch ${baseRef}; using origin/${baseRef} from the checkout. ${errorMessage(error)}`,
       );
     } catch {
       logError(`Failed to get changed files: ${errorMessage(error)}`);
@@ -454,8 +498,11 @@ async function main(argv: string[]): Promise<void> {
 }
 
 if (import.meta.main) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
-    logError(errorMessage(error));
-    process.exitCode = 1;
-  });
+  stopCommands();
+  main(process.argv.slice(2))
+    .catch((error: unknown) => {
+      logError(errorMessage(error));
+      process.exitCode = 1;
+    })
+    .finally(resumeCommands);
 }

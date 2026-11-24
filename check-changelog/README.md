@@ -97,12 +97,20 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
   now classified like any other: it is not a downgrade, and if other fields changed too, the
   check fails with an error saying the version is not valid semver, so its changelog section
   can't be checked, and that the `no-changelog` label skips the check.
+- The script stops workflow commands (`::stop-commands::` with a random token) for as long as it
+  runs, because its output includes text from the pull request (changelog lines, versions, file
+  paths), where a `\r` starts a new line for the runner. Commands are resumed only around the
+  script's own fetch-failure warning, whose message is escaped onto one line. Error messages go
+  to stdout rather than stderr, so the runner sees them in order with the stop and resume
+  markers.
 
 ## Security
 
 The action installs its own pinned dependencies (`package-lock.json`) at run time, without
 install scripts. It reads, but never runs, code from the target repository. Use it in
-`pull_request` workflows with a read-only token.
+`pull_request` workflows with a read-only token. The runner does not process workflow commands
+in the check script's output (see above), so text from the pull request can't add annotations or
+change the step's environment.
 
 ## Development
 
@@ -113,6 +121,9 @@ npm run typecheck
 npm test              # unit tests of the package.json diff analysis
 test/fixtures.sh      # end-to-end runs against fixture git repositories
 ```
+
+The fixture tests also fail if any output line, split on `\r` as well as `\n`, would be taken as
+a workflow command other than the script's own.
 
 `.github/workflows/test_check-changelog.yml` runs these, checks that the `no-changelog` label
 skips the checkout, and runs the action against a merged `Consensys-Incorporated/ocap-kernel`
