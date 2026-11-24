@@ -12,7 +12,7 @@
 #    (YARN_IGNORE_PATH=1, set on every step, ignores `yarnPath`.)
 # 2. The user-level `~/.yarnrc.yml` is removed: Yarn always loads it, and it
 #    can also list plugins.
-# 3. Lifecycle scripts are removed from every package that may be published.
+# 3. Lifecycle scripts are removed from every workspace, private ones included.
 # 4. Packages that redirect publishing to a registry other than
 #    `https://registry.npmjs.org` are rejected.
 
