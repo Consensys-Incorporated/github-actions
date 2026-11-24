@@ -8,7 +8,7 @@ packages are packed instead (a dry run), with a diff report against the latest p
 The repository cannot run code while publishing.
 
 Ported from [`MetaMask/action-npm-publish`](https://github.com/MetaMask/action-npm-publish) v7
-(MIT). Requires Yarn 4.16 or later.
+(MIT; see [NOTICE](NOTICE)). Requires Yarn 4.16 or later.
 
 ## Usage
 
