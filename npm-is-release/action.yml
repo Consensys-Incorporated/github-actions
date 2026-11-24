@@ -45,6 +45,7 @@ runs:
         ref: ${{ github.sha }}
         # This commit and the one before, for the comparison.
         fetch-depth: 2
+        persist-credentials: false
 
     - name: Check whether this is a release
       id: is-release

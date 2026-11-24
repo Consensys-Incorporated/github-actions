@@ -28,8 +28,17 @@ if [[ -z "${BEFORE:-}" ]]; then
   exit 1
 fi
 
-# Fetch BEFORE in case the push contained more than one commit.
-git fetch --quiet origin "$BEFORE"
+# Fetch BEFORE in case the push contained more than one commit. Without
+# persisted credentials this fails for a private repository; BEFORE may still
+# be present (it is HEAD^ for a single-commit push with fetch-depth 2).
+if ! git fetch --quiet origin "$BEFORE"; then
+  if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+    echo "::warning::Could not fetch $BEFORE; using the copy already in the repository."
+  else
+    echo "::error::Could not fetch $BEFORE."
+    exit 1
+  fi
+fi
 
 version_before="$(git show "$BEFORE:package.json" | jq --raw-output .version)"
 version_after="$(jq --raw-output .version package.json)"
