@@ -15,6 +15,9 @@
 
 set -euo pipefail
 
+# Clear files left by an earlier call in the same job, which may have used a
+# different ref.
+rm -rf -- "$METADATA_DIR"
 mkdir -p "$METADATA_DIR"
 
 download_file() {
