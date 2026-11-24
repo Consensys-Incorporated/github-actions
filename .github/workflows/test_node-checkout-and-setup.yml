@@ -190,6 +190,24 @@ jobs:
           grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
           grep -qx "package-json-path=" "$GITHUB_OUTPUT"
 
+      # Annotations can't be read from inside the job, so the pre-checked-out
+      # job below can't check its warning; this checks the script's output.
+      - name: warn-ignored-checkout-inputs.sh warns about ref and persist-credentials
+        run: |
+          check() {
+            local expected="$1" output actual
+            output="$(node-checkout-and-setup/scripts/warn-ignored-checkout-inputs.sh)"
+            actual="$(grep -o '^::warning::[^ ]*' <<<"$output" || true)"
+            if [[ "$actual" != "$expected" ]]; then
+              printf '::error::Expected warnings:\n%s\nGot:\n%s\n' "$expected" "$actual"
+              exit 1
+            fi
+          }
+          INPUT_REF='' PERSIST_CREDENTIALS=false check ''
+          INPUT_REF=main PERSIST_CREDENTIALS=false check "::warning::'ref'"
+          INPUT_REF='' PERSIST_CREDENTIALS=true check "::warning::'persist-credentials:"
+          INPUT_REF=main PERSIST_CREDENTIALS=true check $'::warning::\'ref\'\n::warning::\'persist-credentials:'
+
       # The high-risk job below can't tell whether "Restore Yarn cache" ran, so
       # check the conditions of all cache steps in action.yml instead.
       - name: Every cache step in action.yml is skipped in high-risk mode
@@ -689,7 +707,8 @@ jobs:
         uses: ./actions-repo/node-checkout-and-setup
         with:
           is-high-risk-environment: false
-          # A ref the action would check out if it ran actions/checkout.
+          # A ref the action would check out if it ran actions/checkout. The
+          # action only warns that it has no effect (tested in the scripts job).
           ref: main
       - name: Assert HEAD did not change
         run: |

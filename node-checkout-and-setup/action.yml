@@ -22,11 +22,17 @@ inputs:
     required: false
     default: 'false'
   ref:
-    description: 'Branch, tag or SHA to check out. Defaults to the commit that triggered the workflow.'
+    description: >-
+      Branch, tag or SHA to check out. Defaults to the commit that triggered
+      the workflow. Not checked out, with a warning, if the workspace is
+      already a git repository.
     required: false
     default: ''
   persist-credentials:
-    description: 'Passed to `actions/checkout`. Set to `true` only if later steps use the job token from `.git/config` (e.g. to push).'
+    description: >-
+      Passed to `actions/checkout`. Set to `true` only if later steps use the
+      job token from `.git/config` (e.g. to push). Has no effect, with a
+      warning, if the workspace is already a git repository.
     required: false
     default: 'false'
   skip-install:
@@ -131,6 +137,17 @@ runs:
         path: ${{ steps.compute-cache-paths.outputs.paths }}
         key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
         lookup-only: true
+
+    # Runs before the checkout below, which would create .git. A workspace that
+    # is already a git repository is not checked out again.
+    - name: Warn about checkout inputs that have no effect
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && hashFiles('.git') != '' }}
+      shell: bash
+      env:
+        INPUT_REF: ${{ inputs.ref }}
+        PERSIST_CREDENTIALS: ${{ inputs.persist-credentials }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/warn-ignored-checkout-inputs.sh"'
 
     - name: Check out repository
       if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && hashFiles('.git') == '' }}
