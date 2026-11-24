@@ -1,0 +1,438 @@
+name: Checkout and setup environment
+description: Git checkout if not already checked out, get node_modules from cache if available, set up Node.js, run yarn install
+
+inputs:
+  is-high-risk-environment:
+    description: 'Use a secure setup without caching (true = secure, false = optimized for speed).'
+    required: true
+  fetch-depth:
+    description: 'Depth of the Git history to fetch.'
+    required: false
+    default: '1'
+  filter:
+    description: 'Partially clone the repository with the given Git filter. This is passed to actions/checkout; for example, tree:0 performs a treeless partial clone.'
+    required: false
+    default: ''
+  ref:
+    description: 'Branch, tag, or SHA to checkout.'
+    required: false
+    default: ''
+  cache-node-modules:
+    description: 'Enable node_modules caching for the prepare job. When is-high-risk-environment is true, only saves (write-only); when false, reads and writes.'
+    required: false
+    default: 'false'
+  node-version:
+    description: 'Node.js version to use. If not provided, will use the version specified in the `.nvmrc` file.'
+    required: false
+    default: ''
+  skip-allow-scripts:
+    description: 'Skip the `yarn allow-scripts` step. If your job does not need this step, skipping it may save some time.'
+    required: false
+    default: 'false'
+  yarn-install-max-retries:
+    description: 'Maximum number of retries for the `yarn --immutable` install command.'
+    required: false
+    default: '5'
+  yarn-tarball:
+    description: 'URL to a Yarn tarball to use instead of the default.'
+    required: false
+    default: '.yarn/yarn-corepack.tgz'
+  force-setup:
+    description: 'Force checkout, Node setup, and cache restore to run even if the node_modules cache exists. Use this with cache-node-modules when later steps in the same job need a prepared workspace.'
+    required: false
+    default: 'false'
+  persist-credentials:
+    description: 'Whether to persist the GitHub token in the checked-out repository. This is passed to the `actions/checkout` step. Setting this to false can help prevent accidental token leaks, but if your workflow needs to make authenticated GitHub API calls using the checked-out repository, you may need to set this to true (default).'
+    required: false
+    default: 'true'
+  skip-install:
+    description: 'Skip all Yarn install steps. The repository is still checked out and Node.js is still set up, but dependencies are not installed.'
+    required: false
+    default: 'false'
+
+# The outputs are for the unit tests in `build-lint-test.yml`, and
+# probably not useful for other workflows.
+outputs:
+  node-modules-cache-hit:
+    description: 'Whether the node_modules cache was hit.'
+    value: ${{ steps.download-node-modules.outputs.cache-hit || steps.try-skip-setup.outputs.cache-hit }}
+  yarn-cache-hit:
+    description: 'Whether the yarn cache was hit.'
+    value: ${{ steps.restore-setup-node-cache.outputs.cache-hit }}
+  computed-node-version:
+    description: 'The truncated version of Node.js that was computed.'
+    value: ${{ steps.compute-node-version.outputs.node-version }}
+  node-version:
+    description: 'The full version of Node.js that was actually used.'
+    value: ${{ steps.setup-node.outputs.node-version }}
+  skipped-setup:
+    description: 'Whether the setup steps were skipped due to a cache hit.'
+    value: ${{ steps.try-skip-setup.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # The "required: true" field is not enforced by GitHub, so we need to check
+    # it manually.
+    - name: Enforce required input is either "true" or "false"
+      env:
+        IS_HIGH_RISK_ENVIRONMENT: ${{ inputs.is-high-risk-environment }}
+        CACHE_NODE_MODULES: ${{ inputs.cache-node-modules }}
+      run: |
+        if [[ "$IS_HIGH_RISK_ENVIRONMENT" == "true" ]]; then
+          if [[ "$CACHE_NODE_MODULES" == "true" ]]; then
+            echo 'High-risk environment detected. Cache reads disabled; cache save enabled (write-only mode).'
+          else
+            echo 'High-risk environment detected. All caching disabled for security.'
+          fi
+        elif [[ "$IS_HIGH_RISK_ENVIRONMENT" == "false" ]]; then
+          echo 'Low-risk environment detected. Enabling cache for optimized performance.'
+        else
+          echo "::error::Invalid value for 'is-high-risk-environment'. Must be 'true' (secure, no cache) or 'false' (faster, cache enabled)."
+          exit 1
+        fi
+      shell: bash
+
+    - name: Download repository metadata from current commit
+      id: download-repository-metadata
+      run: |
+        # Some decisions in this action happen before actions/checkout runs:
+        # choosing a Node.js version, computing cache keys, and deciding whether
+        # a lookup-only node_modules cache hit can skip setup. Download only the
+        # small metadata files those decisions need instead of checking out the
+        # repository early.
+        METADATA_DIR="$RUNNER_TEMP/action-checkout-and-setup-metadata"
+        mkdir -p "$METADATA_DIR"
+
+        download_file() {
+          local file_path="$1"
+          local destination="$2"
+
+          if [[ -s "$destination" ]]; then
+            return 0
+          fi
+
+          # For public repositories, we can download the raw file directly from
+          # the GitHub URL. For private repositories, we need to use the GitHub
+          # CLI to authenticate and download the file. We don't use the GitHub
+          # CLI for public repositories because it's subject to the GitHub REST
+          # API rate limit, while the raw URL is served by a CDN that is not.
+          if [[ "$REPO_VISIBILITY" == "public" ]]; then
+            curl -sSf -o "$destination" "https://raw.githubusercontent.com/${OWNER_AND_REPO}/${COMMIT_HASH}/${file_path}"
+          else
+            gh api "repos/${OWNER_AND_REPO}/contents/${file_path}?ref=${COMMIT_HASH}" --header "Accept: application/vnd.github.raw+json" > "$destination"
+          fi
+        }
+
+        write_output() {
+          echo "$1=$2" >> "$GITHUB_OUTPUT"
+        }
+
+        NVMRC_PATH=""
+        if [[ -s .nvmrc ]]; then
+          NVMRC_PATH=".nvmrc"
+        elif [[ -z "$INPUT_NODE_VERSION" ]]; then
+          # .nvmrc is required only when the caller did not provide node-version.
+          # If we cannot find it locally or at the requested ref, setup-node
+          # cannot be configured correctly, so this failure is fatal.
+          NVMRC_PATH="$METADATA_DIR/.nvmrc"
+          if ! download_file ".nvmrc" "$NVMRC_PATH"; then
+            rm -f "$NVMRC_PATH"
+            echo "::error::You must either have a .nvmrc at the requested ref, or provide the node-version input. Failed to download .nvmrc from ${OWNER_AND_REPO}@${COMMIT_HASH}"
+            exit 1
+          fi
+        fi
+        write_output "nvmrc-path" "$NVMRC_PATH"
+
+        YARN_LOCK_AVAILABLE="false"
+        if [[ -s yarn.lock ]]; then
+          YARN_LOCK_AVAILABLE="true"
+        elif [[ "$IS_HIGH_RISK_ENVIRONMENT" == "false" && "$CACHE_NODE_MODULES" == "true" && "$SKIP_INSTALL" != "true" ]]; then
+          # hashFiles('yarn.lock') can only see files in the workspace, so keep
+          # this download in place instead of the metadata directory. A missing
+          # yarn.lock just disables the lookup-only cache check; the normal
+          # checkout/setup path can still continue.
+          if download_file "yarn.lock" "yarn.lock"; then
+            YARN_LOCK_AVAILABLE="true"
+          else
+            rm -f yarn.lock
+            echo "::warning::Failed to download yarn.lock from ${OWNER_AND_REPO}@${COMMIT_HASH}"
+          fi
+        fi
+        write_output "yarn-lock-available" "$YARN_LOCK_AVAILABLE"
+
+        PACKAGE_JSON_PATH=""
+        if [[ -s package.json ]]; then
+          PACKAGE_JSON_PATH="package.json"
+        elif [[ "$SKIP_INSTALL" != "true" && ( "$IS_HIGH_RISK_ENVIRONMENT" == "false" || "$CACHE_NODE_MODULES" == "true" ) ]]; then
+          # package.json lets us derive shallow workspace node_modules paths
+          # before checkout. This avoids the expensive **/node_modules manifest
+          # walk when saving/restoring the cache. If it is unavailable, we fall
+          # back later to the broad path so the action remains compatible.
+          PACKAGE_JSON_PATH="$METADATA_DIR/package.json"
+          if ! download_file "package.json" "$PACKAGE_JSON_PATH"; then
+            rm -f "$PACKAGE_JSON_PATH"
+            PACKAGE_JSON_PATH=""
+            echo "::warning::Failed to download package.json from ${OWNER_AND_REPO}@${COMMIT_HASH}; using the broad node_modules cache path fallback."
+          fi
+        fi
+        write_output "package-json-path" "$PACKAGE_JSON_PATH"
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CACHE_NODE_MODULES: ${{ inputs.cache-node-modules }}
+        INPUT_NODE_VERSION: ${{ inputs.node-version }}
+        IS_HIGH_RISK_ENVIRONMENT: ${{ inputs.is-high-risk-environment }}
+        OWNER_AND_REPO: ${{ github.repository }}
+        COMMIT_HASH: ${{ inputs.ref || github.sha }}
+        REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        SKIP_INSTALL: ${{ inputs.skip-install }}
+
+    - name: Synthesize our node version from inputs.node-version and .nvmrc
+      id: compute-node-version
+      run: |
+        # If inputs.node-version is not provided then use .nvmrc
+        if [[ -z "$INPUT_NODE_VERSION" ]]; then
+          if [[ ! -s "$NVMRC_FILE" ]]; then
+            echo "::error::You must either have a .nvmrc at the requested ref, or provide the node-version input."
+            exit 1
+          fi
+
+          NODE_VERSION=$(tr -d '\r\n' < "$NVMRC_FILE")
+        else
+          NODE_VERSION="$INPUT_NODE_VERSION"
+        fi
+
+        if [[ -z "$NODE_VERSION" ]]; then
+          echo "::error::You must either have a .nvmrc or provide the node-version input."
+          exit 1
+        fi
+
+        # If NODE_VERSION starts with "v" or starts with a number, take just the part before the second dot
+        # "v24.13.0" becomes "v24.13"
+        # "v24.13" stays as "v24.13"
+        # "v24" stays as "v24"
+        # "24.13.0" becomes "v24.13.0" and then "v24.13"
+        # "24.x" (with a literal x, not a wildcard) becomes "v24"
+        # "lts/*" becomes the latest LTS version from `nvm ls-remote --lts`, for example "v24.13.0", and then "v24.13"
+
+        # If it starts with a number but not "v", add "v" to the beginning. For example, "24.13.0" becomes "v24.13.0"
+        if [[ "$NODE_VERSION" != v* && "$NODE_VERSION" =~ ^[0-9] ]]; then
+          NODE_VERSION="v$NODE_VERSION"
+        fi
+
+        # Normalize major-range inputs like "24.x" to major-only "v24".
+        # We use the computed version as part of a cache key, and the patch/minor
+        # part of an "X.x" range isn't stable or meaningful for that purpose.
+        if [[ "$NODE_VERSION" =~ ^v([0-9]+)\.x$ ]]; then
+          NODE_VERSION="v${BASH_REMATCH[1]}"
+        fi
+
+        # If it's "lts/*", fetch "https://nodejs.org/download/release/index.json" and find the first version with "lts" not equal to false
+        # (We cannot run `nvm ls-remote --lts` because nvm is not yet installed)
+        if [[ "$NODE_VERSION" == "lts/*" ]]; then
+          # The index is saved so the "Resolve latest Node.js patch version" step can reuse it.
+          curl -fsS --retry 3 -o "$NODE_INDEX_FILE" https://nodejs.org/download/release/index.json
+          NODE_VERSION=$(jq -r '[.[] | select(.lts != false)][0].version' "$NODE_INDEX_FILE")
+        fi
+
+        # Cut NODE_VERSION to the major and minor version (e.g. "v24.13")
+        NODE_VERSION=$(echo "$NODE_VERSION" | cut -d. -f1-2)
+
+        # Now make sure everything happened correctly: it starts with "v" and is in the format "vX.Y" or "vX".
+        if [[ "$NODE_VERSION" != v* || ! "$NODE_VERSION" =~ ^v[0-9]+(\.[0-9]+)?$ ]]; then
+          echo "::error::Failed to determine Node.js version from .nvmrc or inputs.node-version. Version numbers are accepted with or without a 'v', and 'lts/*' is also accepted."
+          exit 1
+        fi
+
+        echo "node-version=$NODE_VERSION" >> "$GITHUB_OUTPUT"
+      shell: bash
+      env:
+        INPUT_NODE_VERSION: ${{ inputs.node-version }}
+        NVMRC_FILE: ${{ steps.download-repository-metadata.outputs.nvmrc-path }}
+        NODE_INDEX_FILE: ${{ runner.temp }}/node-release-index.json
+
+    - name: Compute node_modules cache paths
+      if: ${{ (inputs.is-high-risk-environment == 'false' || inputs.cache-node-modules == 'true') && inputs.skip-install != 'true' }}
+      id: compute-node-modules-cache-paths
+      run: |
+        CACHE_PATHS_TMP_FILE="$(mktemp)"
+
+        if [[ -s "$PACKAGE_JSON_FILE" ]]; then
+          # Cache Yarn's install-state file, the root node_modules directory,
+          # and one node_modules directory per workspace pattern declared in
+          # package.json. Yarn can create package-local node_modules folders in
+          # monorepos, but walking every nested node_modules directory with
+          # **/node_modules is expensive in large installs.
+          {
+            echo ".yarn/install-state.gz"
+            echo "node_modules"
+            jq -r '
+              (.workspaces // [])
+              | if type == "array" then .
+                elif type == "object" then (.packages // [])
+                elif type == "string" then [.]
+                else []
+                end
+              | .[]
+              | "\(.)/node_modules"
+            ' "$PACKAGE_JSON_FILE"
+          } | awk 'NF && !seen[$0]++' > "$CACHE_PATHS_TMP_FILE"
+        else
+          {
+            echo ".yarn/install-state.gz"
+            echo "**/node_modules"
+          } > "$CACHE_PATHS_TMP_FILE"
+        fi
+
+        # actions/cache accepts a newline-delimited list through a multiline
+        # output. Remove empty lines and duplicates above so the cache action
+        # gets stable paths even if package.json contains overlapping patterns.
+        {
+          echo "paths<<EOF"
+          cat "$CACHE_PATHS_TMP_FILE"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        rm -f "$CACHE_PATHS_TMP_FILE"
+      shell: bash
+      env:
+        PACKAGE_JSON_FILE: ${{ steps.download-repository-metadata.outputs.package-json-path }}
+
+    - name: Try skipping setup if node-modules cache available
+      if: ${{ inputs.is-high-risk-environment == 'false' && inputs.cache-node-modules == 'true' && steps.download-repository-metadata.outputs.yarn-lock-available == 'true' && inputs.force-setup != 'true' && inputs.skip-install != 'true' }}
+      id: try-skip-setup
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.compute-node-modules-cache-paths.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
+        lookup-only: true
+
+    # Checkout repository only if not already checked out.
+    - name: Checkout repository
+      uses: actions/checkout@v7
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && hashFiles('.git') == '' }}
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+        filter: ${{ inputs.filter }}
+        ref: ${{ inputs.ref }}
+        persist-credentials: ${{ inputs.persist-credentials }}
+
+    - name: Resolve latest Node.js patch version
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      id: resolve-node-version
+      run: |
+        # Reuse the release index if the "lts/*" lookup already downloaded it.
+        if [[ ! -s "$NODE_INDEX_FILE" ]]; then
+          curl -fsS --retry 3 -o "$NODE_INDEX_FILE" https://nodejs.org/download/release/index.json
+        fi
+
+        RESOLVED_VERSION=$(
+          jq -r --arg prefix "$COMPUTED_NODE_VERSION." \
+            '[.[].version | select(startswith($prefix))][0]' "$NODE_INDEX_FILE"
+        )
+
+        if [[ -z "$RESOLVED_VERSION" || "$RESOLVED_VERSION" == "null" ]]; then
+          echo "::error::Could not find a Node.js release matching $COMPUTED_NODE_VERSION."
+          exit 1
+        fi
+
+        echo "node-version=${RESOLVED_VERSION#v}" >> "$GITHUB_OUTPUT"
+      shell: bash
+      env:
+        COMPUTED_NODE_VERSION: ${{ steps.compute-node-version.outputs.node-version }}
+        NODE_INDEX_FILE: ${{ runner.temp }}/node-release-index.json
+
+    - name: Set up Node.js
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      uses: actions/setup-node@v6
+      id: setup-node
+      with:
+        node-version: ${{ steps.resolve-node-version.outputs.node-version }}
+
+    - name: Print Node.js version
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      run: |
+        echo "Using Node.js version: $NODE_VERSION"
+      shell: bash
+      env:
+        NODE_VERSION: ${{ steps.setup-node.outputs.node-version }}
+
+    - run: corepack enable
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      shell: bash
+
+    # Hydrate yarn using the specified command when hydration is enabled
+    - name: Hydrate Yarn
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      run: |
+        # If YARN_TARBALL exists in the file system, hydrate
+        if [ -s "$YARN_TARBALL" ]; then
+          echo "Hydrating Yarn using tarball: $YARN_TARBALL"
+          corepack hydrate "$YARN_TARBALL" --activate
+        fi
+      shell: bash
+      env:
+        YARN_TARBALL: ${{ inputs.yarn-tarball }}
+
+    # In a low-risk environment, try to download cache of `node_modules` and
+    # Yarn install state, if they exist. On failure, will run the `yarn`
+    # command instead.
+    - name: Download node_modules cache and Yarn install state
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && inputs.skip-install != 'true' }}
+      id: download-node-modules
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.compute-node-modules-cache-paths.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
+
+    - name: Conditionally restore action/setup-node cache
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment != 'true' && steps.download-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      uses: actions/setup-node@v6
+      id: restore-setup-node-cache
+      with:
+        node-version: ${{ steps.setup-node.outputs.node-version }}
+        # If the `node_modules` cache was not found, use `setup-node` cache to
+        # restore the `.yarn` folder.
+        # Notes: if this is always set to 'yarn':
+        #   1) Will not be secure for high-risk environment.
+        #   2) Self-hosted runners will fail to find this cache, and then fail
+        #      on the 'Post Setup environment' step
+        #   3) This action will run a few seconds slower, because when we
+        #      restore the `node_modules` folder from cache, there's no need to
+        #      download the `.yarn` folder too
+        cache: 'yarn'
+
+    # If the node_modules cache was not found (or it's a high-risk environment),
+    # run the yarn install
+    - name: Install dependencies
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.download-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      uses: MetaMask/action-retry-command@v1
+      with:
+        command: yarn --immutable
+        shell: bash
+        max-retries: ${{ inputs.yarn-install-max-retries }}
+
+    # If the node_modules cache was found, run `yarn allow-scripts`. This is
+    # typically run as part of the Yarn install, so we only need to run it if
+    # we're restoring the cache.
+    - name: Run `allow-scripts`
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.skip-allow-scripts != 'true' && steps.download-node-modules.outputs.cache-hit == 'true' && inputs.skip-install != 'true' }}
+      uses: MetaMask/action-retry-command@v1
+      with:
+        command: |
+          if yarn bin allow-scripts &>/dev/null; then
+            yarn allow-scripts
+          fi
+        shell: bash
+
+    # Save the node_modules cache when caching is enabled.
+    # When is-high-risk-environment is true, the read steps above are skipped
+    # but we still save so that downstream PR jobs can read from the
+    # main-branch cache scope (write-only mode).
+    - name: Cache workspace
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.download-node-modules.outputs.cache-hit != 'true' && inputs.cache-node-modules == 'true' && inputs.skip-install != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.compute-node-modules-cache-paths.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}

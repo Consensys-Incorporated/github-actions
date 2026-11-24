@@ -1,0 +1,349 @@
+name: Build, Lint, and Test
+
+on:
+  workflow_call:
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [22.x]
+    needs:
+      - test-high-risk-without-prepare
+      - test-low-risk-without-prepare
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+          cache-node-modules: true
+
+  lint:
+    name: Lint
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+          node-version: ${{ matrix.node-version }}
+      - run: yarn lint
+      - name: Validate RC changelog
+        if: ${{ startsWith(github.head_ref, 'release/') }}
+        run: yarn lint:changelog --rc
+      - name: Validate changelog
+        if: ${{ !startsWith(github.head_ref, 'release/') }}
+        run: yarn lint:changelog
+      - name: Require clean working directory
+        shell: bash
+        run: |
+          if ! git diff --exit-code; then
+            echo "Working tree dirty at end of job"
+            exit 1
+          fi
+
+  test-high-risk-after-prepare:
+    name: Test high-risk after prepare
+    runs-on: ${{ matrix.os }}
+    needs: prepare
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: true
+
+      - name: Ensure node_modules cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit }}
+        run: exit 1
+
+      - name: Ensure .yarn cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-low-risk-after-prepare:
+    name: Test low-risk after prepare
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+
+      - name: Ensure `node_modules` cache was used
+        if: ${{ !steps.checkout-and-setup.outputs.node-modules-cache-hit }}
+        run: exit 1
+
+      - name: Ensure `.yarn` cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-high-risk-without-prepare:
+    name: Test high-risk without prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: true
+
+      - name: Ensure `node_modules` cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit }}
+        run: exit 1
+
+      - name: Ensure `.yarn` cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-low-risk-without-prepare:
+    name: Test low-risk without prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+
+      - name: Ensure node_modules or yarn cache was used
+        if: ${{ !steps.checkout-and-setup.outputs.node-modules-cache-hit && !steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-prepare-force-setup:
+    name: Test prepare force setup
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+          cache-node-modules: true
+          force-setup: true
+
+      - name: Ensure setup was not skipped
+        if: ${{ steps.checkout-and-setup.outputs.skipped-setup }}
+        run: exit 1
+
+  test-high-risk-cache-write-only:
+    name: Test high-risk with cache (write-only mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: true
+          cache-node-modules: true
+
+      - name: Ensure node_modules cache was not read
+        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit }}
+        run: exit 1
+
+      - name: Ensure .yarn cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-low-risk-reads-high-risk-cache:
+    name: Test low-risk reads high-risk cache
+    runs-on: ubuntu-latest
+    needs: test-high-risk-cache-write-only
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+
+      - name: Ensure node_modules cache was used
+        if: ${{ !steps.checkout-and-setup.outputs.node-modules-cache-hit }}
+        run: exit 1
+
+      - name: Ensure .yarn cache was not used
+        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-high-risk-string:
+    name: Test high-risk string
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: 'true'
+
+  test-low-risk-string:
+    name: Test low-risk string
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: 'false'
+
+  test-no-input:
+    name: Test no input
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        continue-on-error: true
+        uses: ./
+
+      - name: Ensure previous step failed
+        if: ${{ steps.checkout-and-setup.outcome == 'success' }}
+        run: exit 1
+
+  test-bad-input-string:
+    name: Test bad input string
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        continue-on-error: true
+        uses: ./
+        with:
+          is-high-risk-environment: 'foo'
+
+      - name: Ensure previous step failed
+        if: ${{ steps.checkout-and-setup.outcome == 'success' }}
+        run: exit 1
+
+  test-bad-input-number:
+    name: Test bad input number
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        continue-on-error: true
+        uses: ./
+        with:
+          is-high-risk-environment: 1
+
+      - name: Ensure previous step failed
+        if: ${{ steps.checkout-and-setup.outcome == 'success' }}
+        run: exit 1
+
+  test-custom-node-version:
+    name: Test custom Node.js version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+          node-version: 20.x
+
+      - name: Ensure correct Node.js version
+        if: ${{ !contains(steps.checkout-and-setup.outputs.node-version, '20.') }}
+        run: node --version && exit 1
+
+  test-skip-install:
+    name: Test skip-install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+          skip-install: true
+
+      - name: Ensure Node.js was set up
+        if: ${{ !steps.checkout-and-setup.outputs.node-version }}
+        run: exit 1
+
+      - name: Ensure dependencies were not installed
+        run: |
+          if [ -d node_modules ]; then
+            echo "node_modules should not exist when skip-install is true"
+            exit 1
+          fi
+
+      - name: Ensure caches were not used
+        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit || steps.checkout-and-setup.outputs.yarn-cache-hit }}
+        run: exit 1
+
+  test-do-not-checkout-twice:
+    name: Test do not checkout twice
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fe105dad148ae6383a5c7ec77cbe13d67ec98190 # The commit hash when the action was first created
+
+      - name: Store initial head SHA
+        run: echo "INITIAL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Checkout and setup environment
+        id: checkout-and-setup
+        uses: ./
+        with:
+          is-high-risk-environment: false
+          ref: main
+
+      - name: Store new head SHA
+        run: echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Make sure the Git HEAD did not change
+        if: ${{ env.NEW_SHA != env.INITIAL_SHA }}
+        run: exit 1
