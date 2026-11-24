@@ -21,8 +21,10 @@ and replaces
 - If the selected Node.js doesn't ship Corepack (25 and later), `corepack@0.36.0` is installed for
   it.
 - `allow-scripts` is detected by `node_modules/.bin/allow-scripts` rather than `yarn bin`.
-- A downloaded `yarn.lock` is removed when no checkout overwrites it, so a pre-checked-out tree
-  without one fails `yarn --immutable` instead of installing from the downloaded lockfile.
+- `yarn.lock` is not downloaded into a workspace that is already checked out, and the action
+  fails with a clear error when there is no root `yarn.lock` (unless `skip-install`). Upstream
+  could install from a `yarn.lock` downloaded from another ref, and without one its cache keys end
+  in an empty hash, which matches other entries by prefix.
 
 ## Usage
 
@@ -81,12 +83,12 @@ jobs:
 1. Before checkout, download `.nvmrc`, `yarn.lock` and `package.json` from the requested ref, as
    needed and unless already in the workspace (from `raw.githubusercontent.com` for a public
    repository, otherwise with `gh api` and the job token). `yarn.lock` is written to the
-   workspace root and overwritten by the checkout. If no checkout follows (the setup is skipped,
-   or the workspace was already checked out), the downloaded `yarn.lock` is removed after the
-   lookup.
+   workspace root and overwritten by the checkout. It is not downloaded into a workspace that is
+   already checked out, since nothing would overwrite it there.
 2. With `cache-node-modules` in a low-risk job, look up the cache key without downloading. On a
    hit, the job's purpose (warming the cache) is met and the remaining steps are skipped.
-3. Check out with `fetch-depth: 1`, set up Node.js, `corepack enable`.
+3. Check out with `fetch-depth: 1`. Unless `skip-install`, fail if there is no root `yarn.lock`.
+   Set up Node.js, `corepack enable`.
 4. Low-risk: restore `node_modules` from the cache. On a hit, run `yarn allow-scripts` if it is
    installed. On a miss, restore Yarn's download cache with `actions/setup-node` and install.
 5. High-risk: install, with no cache.

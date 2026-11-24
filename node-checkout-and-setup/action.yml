@@ -132,15 +132,6 @@ runs:
         key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
         lookup-only: true
 
-    # The downloaded yarn.lock was only for the lookup above. If no checkout
-    # follows to overwrite it (the setup is skipped, or the caller already
-    # checked out a tree without a root yarn.lock), remove it, so that it can't
-    # stand in for a lockfile the checked-out tree doesn't have.
-    - name: Remove the downloaded yarn.lock
-      if: ${{ steps.download-metadata.outputs.yarn-lock-downloaded == 'true' && (steps.try-skip-setup.outputs.cache-hit == 'true' || hashFiles('.git') != '') }}
-      shell: bash
-      run: rm -f yarn.lock
-
     - name: Check out repository
       if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && hashFiles('.git') == '' }}
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -148,6 +139,17 @@ runs:
         fetch-depth: 1
         ref: ${{ inputs.ref }}
         persist-credentials: ${{ inputs.persist-credentials }}
+
+    # Without a lockfile, the cache keys below would end in an empty hash and
+    # match other entries by prefix, and the install would fail later anyway.
+    - name: Require yarn.lock
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      shell: bash
+      run: |
+        if [[ ! -f yarn.lock ]]; then
+          echo "::error::No yarn.lock in the workspace root. Set skip-install to true to only set up Node.js."
+          exit 1
+        fi
 
     - name: Resolve Node.js release
       id: resolve-node-version

@@ -120,6 +120,22 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: download-metadata.sh does not download yarn.lock into a checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_AND_REPO: ${{ github.repository }}
+        run: |
+          dir="$(mktemp -d)"
+          cd "$dir"
+          git init -q
+          export GITHUB_OUTPUT="$dir.out"
+          IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION=24.x \
+            COMMIT_HASH="$FIXTURE_BRANCH" REPO_VISIBILITY=public METADATA_DIR="$dir.meta" \
+            "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
+          cat "$GITHUB_OUTPUT"
+          grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
+          test ! -e yarn.lock
+
       - name: download-metadata.sh fails without .nvmrc and node-version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -607,10 +623,10 @@ jobs:
             exit 1
           fi
 
-  # A checked-out tree without a root yarn.lock: the yarn.lock downloaded for
-  # the cache lookup must not be used for the install.
+  # A checked-out tree without a root yarn.lock fails before Node.js is set up,
+  # rather than installing from a yarn.lock downloaded from another ref.
   pre-checked-out-without-yarn-lock:
-    name: Pre-checked-out workspace without yarn.lock does not keep the downloaded one
+    name: Pre-checked-out workspace without yarn.lock fails
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -630,16 +646,20 @@ jobs:
           is-high-risk-environment: false
           cache-node-modules: true
           node-version: 24.x
-          # The ref the metadata is downloaded from; its root has a yarn.lock.
+          # A ref whose root has a yarn.lock, which must not be downloaded.
           ref: ${{ env.FIXTURE_BRANCH }}
-      - name: Assert the install failed without a lockfile
+      - name: Assert failure before Node.js setup, with no yarn.lock
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          NODE_VERSION: ${{ steps.action.outputs.node-version }}
+          CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
         run: |
-          # yarn --immutable refuses to create a lockfile. Before the downloaded
-          # yarn.lock was removed, the install succeeded with it.
           [[ "$OUTCOME" == "failure" ]]
+          # The "Require yarn.lock" step runs right after the checkout step and
+          # before setup-node, which sets node-version.
+          [[ -z "$NODE_VERSION" && "$CACHE_HIT" == "false" ]]
           test ! -e yarn.lock
+          test ! -e node_modules
 
   pre-checked-out:
     name: Pre-checked-out workspace is not checked out again
