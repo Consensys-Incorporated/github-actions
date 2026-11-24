@@ -4,7 +4,8 @@ name: 'npm-is-release'
 description: >-
   Decide whether the pushed commit is a release: the root package.json
   version changed since the previous commit and, optionally, the commit
-  message starts with one of a set of prefixes.
+  message starts with one of a set of prefixes. Fails if either version is
+  missing or not valid semver.
 
 inputs:
   commit-starts-with:

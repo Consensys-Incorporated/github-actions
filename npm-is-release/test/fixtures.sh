@@ -30,7 +30,8 @@ unset GIT_CONFIG_COUNT
 OCAP_PREFIXES='Release [version],Release v[version],Release/[version],Release/v[version],Release `[version]`'
 
 # Builds a repository at $WORK/<name>.src with an origin at $WORK/<name>.git.
-# Arguments after the name are commits, each "<version>|<subject>".
+# Arguments after the name are commits, each "<version>|<subject>"; a version
+# of "null" leaves the field out.
 # Prints the SHA of each commit, one per line, oldest first. OBJECT_FORMAT
 # (default sha1) sets the repositories' hash algorithm.
 build() {
@@ -42,7 +43,8 @@ build() {
   for spec in "$@"; do
     local version="${spec%%|*}" subject="${spec#*|}"
     i=$((i + 1))
-    jq -n --arg version "$version" '{name: "root", version: $version, private: true}' >"$src/package.json"
+    jq -n --arg version "$version" '{name: "root", version: $version, private: true}
+      | if .version == "null" then del(.version) else . end' >"$src/package.json"
     echo "$i" >"$src/file.txt"
     git -C "$src" add -A
     git -C "$src" commit -q -m "$subject"
@@ -68,6 +70,7 @@ expect() {
     RUNNER_DEBUG= "$@" "$SCRIPT" 2>&1)"
   status=$?
   set -e
+  printf '%s\n' "$log" >"$WORK/$name.log"
   if ((status != 0)); then
     actual=error
   else
@@ -132,6 +135,34 @@ clone spaced
 expect true "prefixes with spaces after the commas" spaced BEFORE="${shas[0]}" COMMIT_STARTS_WITH='Release [version], Release v[version]'
 expect true "prefixes on separate lines" spaced BEFORE="${shas[0]}" COMMIT_STARTS_WITH=$'Release [version]\nRelease v[version]\n'
 expect false "an empty prefix matches nothing" spaced BEFORE="${shas[0]}" COMMIT_STARTS_WITH='chore,, ,'
+
+# Versions must be semver: they are printed, and a newline followed by "::"
+# would start a workflow command.
+build_shas prerelease '1.1.0|Initial' '1.2.0-rc.1+build.5|Release 1.2.0-rc.1+build.5'
+clone prerelease
+expect true "pre-release version with build metadata" prerelease BEFORE="${shas[0]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES"
+
+build_shas injected-after '1.1.0|Initial' $'1.2.0\n::warning::injected|Release 1.2.0'
+clone injected-after
+expect error "new version with a newline and a workflow command" injected-after BEFORE="${shas[0]}"
+if grep -q '^::warning::injected' "$WORK/injected-after.log"; then
+  echo "not ok - the injected workflow command is not printed"
+  echo "injected workflow command printed" >>"$FAILURES"
+else
+  echo "ok - the injected workflow command is not printed"
+fi
+
+build_shas injected-before $'1.1.0\n::warning::injected|Initial' '1.2.0|Release 1.2.0'
+clone injected-before
+expect error "previous version with a newline" injected-before BEFORE="${shas[0]}"
+
+build_shas not-semver '1.1.0|Initial' '1.2|Release 1.2'
+clone not-semver
+expect error "new version that is not semver" not-semver BEFORE="${shas[0]}"
+
+build_shas no-version 'null|Initial' '1.2.0|Release 1.2.0'
+clone no-version
+expect error "previous package.json without a version" no-version BEFORE="${shas[0]}"
 
 build_shas no-prefix '1.1.0|Initial' '1.2.0|chore: bump'
 clone no-prefix

@@ -10,7 +10,8 @@ expressions, so `Release 1.2.0` also matched `Release 1x2y0`); prefixes may also
 newlines, whitespace around them is trimmed and empty ones are ignored; the checkout does not
 persist credentials, and `github-token` is passed only to the fetch of `before`; `before` must be a
 full commit SHA (upstream passed any value to `git fetch`, where one starting with `-` is read as
-an option).
+an option); both versions must be valid semver, or the action fails (upstream compared any values,
+including a missing version).
 
 ## Usage
 
@@ -62,7 +63,8 @@ jobs:
 2. Check that `before` is a full commit SHA, and fail if it is not.
 3. Fetch `before` (a push may contain more than one commit), passing `github-token` to that
    command only. If the fetch fails but `before` is already present, continue with a warning.
-4. If `before`'s root `package.json` version equals the current one, not a release.
+4. Read the root `package.json` version at `before` and the current one, and fail if either is
+   missing or not valid semver. If they are equal, not a release.
 5. If `commit-starts-with` is set and the message matches none of the prefixes, not a release.
 6. Otherwise, a release.
 
@@ -74,6 +76,8 @@ action fails. Use it on pushes to an existing branch.
 `test/fixtures.sh` builds fixture repositories with local origins, clones them with `--depth 2`
 and runs the script; `.github/workflows/test_npm-is-release.yml` runs it and runs the action with
 `skip-checkout`. Run against upstream's script, the fixtures give the same results except for the
-cases covering the differences above: the two literal-matching cases, the three prefix-list
-cases (spaces after commas, newline separators, empty prefixes), the two checks of the token
-passed to the fetch, and the check that a `before` starting with `-` runs no command.
+cases covering the differences above: the three literal-matching cases (including the
+pre-release version, whose `+` upstream read as a quantifier), the three prefix-list cases
+(spaces after commas, newline separators, empty prefixes), the two checks of the token passed to
+the fetch, the check that a `before` starting with `-` runs no command, and the four invalid
+version cases.

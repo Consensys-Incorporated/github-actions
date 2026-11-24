@@ -98,6 +98,19 @@ fi
 version_before="$(git show "$BEFORE:package.json" | jq --raw-output .version)"
 version_after="$(jq --raw-output .version package.json)"
 
+# Both versions are printed and substituted into the prefixes, so they must
+# be versions: a newline followed by "::" would start a workflow command. A
+# missing version reads as "null" and fails too.
+semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+if [[ ! "$version_before" =~ $semver ]]; then
+  echo "::error::The version in package.json at $BEFORE is not a valid semver version."
+  exit 1
+fi
+if [[ ! "$version_after" =~ $semver ]]; then
+  echo "::error::The version in package.json is not a valid semver version."
+  exit 1
+fi
+
 set_output() {
   echo "IS_RELEASE=$1" >>"$GITHUB_OUTPUT"
 }
