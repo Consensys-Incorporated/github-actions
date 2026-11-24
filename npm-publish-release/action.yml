@@ -5,8 +5,16 @@ description: >-
   Create a GitHub release v<root version> with notes from the changelog. In a
   monorepo with independently versioned packages, release each public package
   whose <name>@<version> tag does not exist yet, and push those tags. The
-  checked-out HEAD must be github.sha. Safe to re-run: an existing release and
-  tags at that commit are kept.
+  checked-out HEAD must be the release commit (github.sha by default). Safe to
+  re-run: an existing release and tags at that commit are kept.
+
+inputs:
+  release-commit:
+    description: >-
+      The full SHA of the commit to release. The release targets it, the tags
+      go on it, and the checked-out HEAD must be it. Defaults to github.sha.
+    required: false
+    default: ${{ github.sha }}
 
 outputs:
   release-version:
@@ -36,7 +44,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ env.GITHUB_TOKEN || github.token }}
-        RELEASE_COMMIT_ID: ${{ github.sha }}
+        RELEASE_COMMIT_ID: ${{ inputs.release-commit }}
         RELEASE_VERSION: ${{ steps.prepare.outputs.release-version }}
         RELEASE_MODE: ${{ steps.prepare.outputs.mode }}
         RELEASE_DIR: ${{ runner.temp }}/npm-publish-release

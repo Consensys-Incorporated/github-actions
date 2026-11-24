@@ -13,8 +13,9 @@ at run time.
 ## Usage
 
 Run it after checking out the commit the workflow runs on (`github.sha`), in a job with
-`contents: write`. The release targets `github.sha` and the tags go on `HEAD`, so the action
-fails before creating anything if they differ.
+`contents: write`. The release targets the release commit (`release-commit`, by default
+`github.sha`) and the tags go on `HEAD`, so the action fails before creating anything if they
+differ.
 
 The action needs only bash, git, jq, `gh` and openssl, which GitHub-hosted runners provide; it
 does not need Node.js or an install. Nothing from the repository may run earlier in the job: no
@@ -38,6 +39,12 @@ jobs:
 ```
 
 It uses `env.GITHUB_TOKEN` if set, otherwise `github.token`.
+
+## Inputs
+
+| Input            | Default      | Description                                                        |
+| ---------------- | ------------ | ------------------------------------------------------------------ |
+| `release-commit` | `github.sha` | The full SHA of the commit to release. `HEAD` must be this commit. |
 
 ## Outputs
 
@@ -64,11 +71,12 @@ variable.
      At least one package must be released.
    - The notes are a `## <name> <version>` section per released package, in workspace order,
      each followed by the body of its changelog's `## [<version>]` section, which must exist.
-4. Fail if `HEAD` is not `github.sha`, or if a `<name>@<version>` tag for a released package
-   already exists locally at another commit.
+4. Fail if `release-commit` is not a full commit SHA, if `HEAD` is not `release-commit`, or if a
+   `<name>@<version>` tag for a released package already exists locally at another commit.
 5. Create the release with `gh release create v<version> --title <version> --notes-file …
-   --target <github.sha>`. If release `v<version>` already exists with target `github.sha`, skip
-   this step and say so in the log; if it exists with another target, fail.
+   --target <release-commit>`. If release `v<version>` already exists with target
+   `release-commit`, skip this step and say so in the log; if it exists with another target,
+   fail.
 6. Monorepo: tag `HEAD` with `<name>@<version>` for each released package (keeping such tags
    that already exist at `HEAD`) and push those tags. The push fails if the remote has one of
    them at another commit.
@@ -93,9 +101,10 @@ heading or the first link reference definition, with blank lines trimmed at both
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
 - The notes are passed with `--notes-file` instead of as an argument.
-- The action fails before creating anything if `HEAD` is not `github.sha`. Upstream created the
-  release at `github.sha` and tagged `HEAD` regardless.
-- An existing release `v<version>` at `github.sha` is kept instead of failing `gh release
+- The action fails before creating anything if `HEAD` is not the release commit. Upstream created
+  the release at `github.sha` and tagged `HEAD` regardless. The release commit is the new
+  `release-commit` input, which defaults to `github.sha`.
+- An existing release `v<version>` at the release commit is kept instead of failing `gh release
   create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
   can finish a release whose tag push failed.
 - `repository.url` may also be a `git+https:` URL, the form npm normalizes it to.

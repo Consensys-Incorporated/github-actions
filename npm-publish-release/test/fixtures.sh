@@ -555,6 +555,16 @@ test_head_mismatch() {
   else
     fail "HEAD other than the release commit fails" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
   fi
+  # A ref name is not a release commit, even if it resolves to HEAD.
+  git -C "$dir" reset -q --hard "$release_commit"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0 HEAD
+  if ((CREATE_STATUS != 0)) && grep -qF "The release commit 'HEAD' is not a full commit SHA." <<<"$CREATE_LOG" &&
+    [[ ! -s "$dir.out/shim.log" && -z "$(git -C "$dir" tag)" ]]; then
+    pass "a release commit that is not a full SHA fails"
+  else
+    fail "a release commit that is not a full SHA fails" "status $CREATE_STATUS" "$CREATE_LOG"
+  fi
 }
 
 # A re-run after the release was created but the tag push failed: the release

@@ -31,11 +31,16 @@ for var in RELEASE_COMMIT_ID RELEASE_VERSION RELEASE_MODE RELEASE_DIR; do
   fi
 done
 
+if [[ ! "$RELEASE_COMMIT_ID" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+  echo "::error::The release commit '$(escape_data "$RELEASE_COMMIT_ID")' is not a full commit SHA."
+  exit 1
+fi
+
 # The release targets RELEASE_COMMIT_ID and the tags go on HEAD, so they must
 # be the same commit. Checked before anything is created.
 head="$(git rev-parse HEAD)"
 if [[ "$head" != "$RELEASE_COMMIT_ID" ]]; then
-  echo "::error::The checked-out commit ($head) is not the release commit ($RELEASE_COMMIT_ID). Check out the commit the workflow runs on (github.sha)."
+  echo "::error::The checked-out commit ($head) is not the release commit ($RELEASE_COMMIT_ID). Check out the release commit (by default the commit the workflow runs on, github.sha)."
   exit 1
 fi
 
