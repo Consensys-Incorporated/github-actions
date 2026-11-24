@@ -1,84 +1,92 @@
-# action-publish-release
+# npm-publish-release
 
-This is a GitHub action that creates a GitHub release for a project that represents a single NPM package (in the case of a polyrepo) or a collection of packages (in the case of a monorepo).
+For a release commit, creates the GitHub release `v<root version>` with notes from the changelog.
+In a monorepo with independently versioned packages, it decides which packages are in the
+release, builds the notes from each one's changelog section, and pushes a `<name>@<version>` tag
+per released package. In a single-package repository, the notes are the root changelog's
+section. Publishing to npm is a separate action, [`npm-publish`](../npm-publish).
 
-- For a polyrepo package, the action will set the title of the GitHub release to the version of the package specified in `package.json`, and it will set the body of the release to the section of the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)-compatible changelog within the project that matches the version.
-
-- For a monorepo (with independent versioning), the action will first determine the set of packages included in the release by choosing each workspace package (the set of packages matched via the `workspaces` field in `package.json`, recursively) whose current version does not yet have a corresponding Git tag of the form `<package-name>@<version>` (for example, `@metamask/example-package@1.2.3`). It will then set the title of the GitHub release to the version of the root package specified in `package.json`, and it will construct the body of the release by stitching together the sections within the changelogs of each package obtained in the previous step.
-
-Designed for use with [`action-npm-publish`](https://github.com/MetaMask/action-npm-publish) and (indirectly) [`action-create-release-pr`](https://github.com/MetaMask/action-create-release-pr).
+Ported from [`MetaMask/action-publish-release`](https://github.com/MetaMask/action-publish-release)
+v3 (MIT), in bash and jq: no `dist/`, no `package.json`, nothing installed at run time.
 
 ## Usage
 
-### Requirements
-
-To use this action, you must grant `GITHUB_TOKEN` write access for your repository. To do this, go into the settings for your repository and, under "Workflow permissions", ensure that "Read and write permissions" is checked.
-
-### Basic example
-
-Add the following to a job's list of steps:
+Run it after checking out the release commit, in a job with `contents: write`.
 
 ```yaml
-- uses: MetaMask/action-publish-release@v3
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: Consensys-Incorporated/github-actions/node-checkout-and-setup@<sha> # <tag>
+        with:
+          is-high-risk-environment: true
+      - uses: Consensys-Incorporated/github-actions/npm-publish-release@<sha> # <tag>
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-## API
+It uses `env.GITHUB_TOKEN` if set, otherwise `github.token`.
 
-### Inputs
+## Outputs
 
-- **`npm-tag`**. The NPM tag to use when checking for the latest published version of a package. Defaults to `latest`.
+| Output            | Description                          |
+| ----------------- | ------------------------------------ |
+| `release-version` | The root `package.json` `version`.   |
 
-### Outputs
+The release notes are also exported to later steps of the job as the `RELEASE_NOTES` environment
+variable.
 
-- **`release-version`**. The version associated with the new release, derived from the primary package's version.
+## Behavior
 
-## Contributing
+1. Read the root `package.json`: `version` (must be valid SemVer) and `repository.url` (must be
+   `https:`).
+2. **Single package** (no `workspaces`): the notes are the body of the `## [<version>]` section
+   of `CHANGELOG.md`, which must exist and be non-empty.
+3. **Monorepo** (`workspaces` present): `release.config.json` must contain
+   `{"versioningStrategy": "independent"}`; fixed versioning is not supported.
+   - Workspaces are listed without running Yarn, the root first, as `yarn workspaces list` does.
+     Patterns may be `<dir>/*` or literal paths; anything else (`**`, braces, `..`) fails.
+     Nested workspaces are followed.
+   - A workspace is released if it is not private, its version is not `0.0.0`, and the tag
+     `<name>@<version>` does not exist (the lookup returns HTTP 404; any other error fails).
+     At least one package must be released.
+   - The notes are a `## <name> <version>` section per released package, in workspace order,
+     each followed by the body of its changelog's `## [<version>]` section, which must exist.
+4. Create the release with `gh release create v<version> --title <version> --notes-file …
+   --target <github.sha>`.
+5. Monorepo: tag `HEAD` with `<name>@<version>` for each released package and push those tags.
 
-### Setup
+A changelog section's body is the lines after its `## [<version>]` heading, up to the next `## `
+heading or the first link reference definition, with blank lines trimmed at both ends.
 
-- Install [Node.js](https://nodejs.org) version 14
-  - If you are using [nvm](https://github.com/creationix/nvm#installation) (recommended) running `nvm use` will automatically choose the right node version for you.
-- Install [Yarn v1](https://yarnpkg.com/en/docs/install)
-- Run `yarn setup` to install dependencies and run any requried post-install scripts
-  - **Warning**: Do not use the `yarn` / `yarn install` command directly. Use `yarn setup` instead. The normal install command will skip required post-install scripts, leaving your development environment in an invalid state.
+## Differences from upstream
 
-### Testing and Linting
+- Fixed versioning and the deprecated `npm-tag` input are removed. A monorepo without
+  `release.config.json` fails instead of defaulting to fixed versioning.
+- Changelog sections are extracted in awk rather than parsed and re-rendered with
+  `@metamask/auto-changelog` v3. The notes keep the file's own spacing; auto-changelog v3 put no
+  blank line after `###` headings.
+- Workspace listing supports `<dir>/*` and literal patterns only, and fails on others instead of
+  globbing them.
+- Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
+  released".
+- Only the new tags are pushed, by name, instead of `git push --tags`.
 
-Run `yarn test` to run the tests once. To run tests on file changes, run `yarn test:watch`.
+## Security
 
-Run `yarn lint` to run the linter, or run `yarn lint:fix` to run the linter and fix any automatically fixable issues.
+- No Yarn, npm or Node.js command runs, so no repository-controlled code (Yarn plugins, scripts)
+  runs while the token has `contents: write`.
+- Manifest and changelog values reach commands as quoted shell variables, never through `${{ }}`.
+- The only tags created are `<name>@<version>` for released packages, with SemVer versions.
+- `RELEASE_NOTES` is exported with a random delimiter, so changelog text cannot end the value
+  early or set other variables.
 
-### Release & Publishing
+## Tests
 
-The project follows a similar release process as other projects in the MetaMask organization. The GitHub Action [`action-create-release-pr`](https://github.com/MetaMask/action-create-release-pr) is used alongside this very action to automate the release process; see that repository for more information about how it works.
-
-1. Choose a release version.
-
-   - The release version should be chosen according to SemVer. Analyze the changes to see whether they include any breaking changes, new features, or deprecations, then choose the appropriate SemVer version. See [the SemVer specification](https://semver.org/) for more information.
-
-2. If this release is backporting changes onto a previous release, then ensure there is a major version branch for that version (e.g. `1.x` for a `v1` backport release).
-
-   - The major version branch should be set to the most recent release with that major version. For example, when backporting a `v1.0.2` release, you'd want to ensure there was a `1.x` branch that was set to the `v1.0.1` tag.
-
-3. Trigger the [`workflow_dispatch`](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#workflow_dispatch) event [manually](https://docs.github.com/en/actions/managing-workflow-runs/manually-running-a-workflow) for the `Create Release Pull Request` action to create the release PR.
-
-   - For a backport release, the base branch should be the major version branch that you ensured existed in step 2. For a normal release, the base branch should be the main branch for that repository (which should be the default value).
-   - This should trigger the [`action-create-release-pr`](https://github.com/MetaMask/action-create-release-pr) workflow to create the release PR.
-
-4. Update the changelog to move each change entry into the appropriate change category ([See here](https://keepachangelog.com/en/1.0.0/#types) for the full list of change categories, and the correct ordering), and edit them to be more easily understood by users of the package.
-
-   - Generally any changes that don't affect consumers of the package (e.g. lockfile changes or development environment changes) are omitted. Exceptions may be made for changes that might be of interest despite not having an effect upon the published package (e.g. major test improvements, security improvements, improved documentation, etc.).
-   - Try to explain each change in terms that users of the package would understand (e.g. avoid referencing internal variables/concepts).
-   - Consolidate related changes into one change entry if it makes it easier to explain.
-   - Run `yarn auto-changelog validate --rc` to check that the changelog is correctly formatted.
-
-5. Review and QA the release.
-
-   - If changes are made to the base branch, the release branch will need to be updated with these changes and review/QA will need to restart again. As such, it's probably best to avoid merging other PRs into the base branch while review is underway.
-
-6. Squash and merge the release.
-
-   - This should trigger this very action to tag the final release commit and publish the release on GitHub.
-   - This also triggers a custom step to ensure that a tag representing the latest major version of this action exists.
+`test/fixtures.sh` tests the scripts against fixture repositories with `gh` and `git push`
+replaced by shims. `.github/workflows/test_npm-publish-release.yml` runs it, runs the action in a
+fixture workspace, and checks parity with the published `v7.0.0` release of
+`Consensys-Incorporated/ocap-kernel`.
