@@ -1,78 +1,73 @@
-# action-is-release
+# npm-is-release
 
-## Description
+On a push, decides whether the pushed commit is a release: the root `package.json` `version`
+changed since the commit before the push, and, optionally, the commit message starts with one of
+a set of prefixes.
 
-Check whether the current commit is a release commit. Primarily this action looks at the `.version` key in a repository's `package.json` to see whether it has changed. Optionally, it can also validate that the commit message starts with a specific string.
-
-![image](https://user-images.githubusercontent.com/675259/181828020-b54ef521-20f1-477c-83b4-3e9ac5b91398.png)
+Ported from [`MetaMask/action-is-release`](https://github.com/MetaMask/action-is-release) v2
+(MIT). Differences: prefixes are matched literally (upstream matched them as regular
+expressions, so `Release 1.2.0` also matched `Release 1x2y0`); prefixes may also be separated by
+newlines, whitespace around them is trimmed and empty ones are ignored; the checkout does not
+persist credentials.
 
 ## Usage
 
-## Basic usage
-
-This will look at the current commit, comparing it to `github.event.before` to see whether the `version` field of the `package.json` file in the root directory of the repository has changed. If the version has been updated, `IS_RELEASE` will be set to `true`. Otherwise, it will be set to `false`.
-
 ```yaml
+on:
+  push:
+    branches: [main]
+
 jobs:
   is-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       IS_RELEASE: ${{ steps.is-release.outputs.IS_RELEASE }}
-    runs-on: ubuntu-latest
     steps:
-      - uses: MetaMask/action-is-release@v2
-        id: is-release
-```
-
-### Filter by merge commit author
-
-Here is an example of how to use this action with a merge author filter. This will act the same as the previous example, except that it will be skipped if the commit author is anyone other than "GitHub". When skipped, `IS_RELEASE` will be unset.
-
-```yaml
-jobs:
-  is-release:
-    # Filter by commits made by the author "github-actions"
-    if: github.event.head_commit.author.name == 'github-actions'
-    outputs:
-      IS_RELEASE: ${{ steps.is-release.outputs.IS_RELEASE }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: MetaMask/action-is-release@v2
-        id: is-release
-```
-
-### With specific commit message prefix
-
-Here is an example of how to use the `commit-starts-with` option.
-
-```yaml
-jobs:
-  is-release:
-    outputs:
-      IS_RELEASE: ${{ steps.is-release.outputs.IS_RELEASE }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: MetaMask/action-is-release@v2
-        id: is-release
+      - id: is-release
+        uses: Consensys-Incorporated/github-actions/npm-is-release@<sha> # <tag>
         with:
-          commit-starts-with: 'Release [version]'
-```
+          commit-starts-with: 'Release [version],Release v[version]'
 
-This will set `IS_RELEASE` to `true` if triggered on a commit where the package version changed, and where the commit message starts with "Release [new package version]" (e.g "Release 1.0.0", if the package version was updated to "1.0.0").
-
-This field can support multiple patterns separated by a comma. For example, if `commit-starts-with` is set to `Release [version],Release/[version]`, it will match on both "Release 1.0.0" and "Release/1.0.0".
-
-### Conditionally running release jobs
-
-You can then add filters in following jobs so those will skip if the `IS_RELEASE` criteria isn't met:
-
-```yaml
-jobs:
-  is-release:
-    < insert example from above >
-  publish-release:
-    if: needs.is-release.outputs.IS_RELEASE == 'true'
-    runs-on: ubuntu-latest
+  publish:
     needs: is-release
+    if: ${{ needs.is-release.outputs.IS_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo publishing
 ```
 
+## Inputs
 
+| Input                | Default                      | Description                                                                                                             |
+| -------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `commit-starts-with` | `''`                         | Prefixes separated by commas or newlines; `[version]` is replaced by the new version. If empty, a version change alone makes a release. |
+| `commit-message`     | `''`                         | Message to check instead of the subject of the checked-out commit.                                                      |
+| `before`             | `${{ github.event.before }}` | The commit to compare with.                                                                                             |
+| `skip-checkout`      | `false`                      | Reuse the caller's checkout. `before` must be reachable or fetchable from it.                                           |
+
+## Outputs
+
+| Output       | Description         |
+| ------------ | ------------------- |
+| `IS_RELEASE` | `true` or `false`. |
+
+## Behavior
+
+1. Unless `skip-checkout`, check out `github.sha` with `fetch-depth: 2`.
+2. Fetch `before` (a push may contain more than one commit). If the fetch fails but `before` is
+   already present, continue with a warning.
+3. If `before`'s root `package.json` version equals the current one, not a release.
+4. If `commit-starts-with` is set and the message matches none of the prefixes, not a release.
+5. Otherwise, a release.
+
+A push that creates a branch has an all-zero `before`, which cannot be fetched, so the action
+fails. Use it on pushes to an existing branch.
+
+## Tests
+
+`test/fixtures.sh` builds fixture repositories with local origins, clones them with `--depth 2`
+and runs the script; `.github/workflows/test_npm-is-release.yml` runs it and runs the action with
+`skip-checkout`. Run against upstream's script, the fixtures give the same results except for the
+two literal-matching cases.
