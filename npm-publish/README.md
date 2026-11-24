@@ -23,6 +23,7 @@ jobs:
         with:
           is-high-risk-environment: true
           ref: ${{ github.sha }}
+          skip-install: true
       # Restore build output here.
       - uses: Consensys-Incorporated/github-actions/npm-publish@<sha> # <tag>
         with:
@@ -40,12 +41,20 @@ jobs:
         with:
           is-high-risk-environment: true
           ref: ${{ github.sha }}
+          skip-install: true
       # Restore build output here.
       - uses: Consensys-Incorporated/github-actions/npm-publish@<sha> # <tag>
         with:
           dry-run: false
           npm-token: ${{ secrets.NPM_TOKEN }}
 ```
+
+Nothing from the repository may run in the publish job before this action, since code that runs
+earlier can make the action's steps run it again: through `$GITHUB_PATH` (which the action can't
+undo), the Corepack cache, or files left in the checkout. Hence `skip-install: true`: `yarn install`
+would run Yarn plugins and allowed dependency scripts with OIDC available. Build in another job
+and restore the build output as an artifact. Packing and publishing don't need `node_modules`, only
+the committed `yarn.lock`.
 
 ## Inputs
 
