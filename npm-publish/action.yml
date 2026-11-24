@@ -3,9 +3,10 @@
 name: 'npm-publish'
 description: >-
   Publish every public workspace package whose current version is not on npm
-  yet: with OIDC for packages already on npm, and with a token for a
-  package's first publish. Without a usable credential, pack the packages
-  instead (a dry run). The repository cannot run code while publishing.
+  yet: with OIDC (staged, with provenance) for packages already on npm, and
+  with a token for a package's first publish. Without a usable credential,
+  pack the packages instead (a dry run). The repository cannot run code while
+  publishing.
 
 inputs:
   npm-token:
@@ -22,14 +23,6 @@ inputs:
     description: 'The npm dist-tag to publish to.'
     required: false
     default: latest
-  staged-publish:
-    description: 'Whether to use staged publishing. Defaults to "true". If set to "false", the action will publish directly to NPM without a staging step.'
-    required: false
-    default: 'true'
-  provenance:
-    description: 'Whether to include provenance information in the package. Must be disabled for private repositories. Defaults to "true".'
-    required: false
-    default: 'true'
   slack-webhook-url:
     description: 'Slack incoming webhook. If set, post a message that the release is awaiting deployment.'
     required: false
@@ -68,8 +61,6 @@ runs:
         YARN_IGNORE_PATH: '1'
         YARN_NPM_AUTH_TOKEN: ${{ inputs.npm-token }}
         PUBLISH_NPM_TAG: ${{ inputs.npm-tag }}
-        STAGED_PUBLISH: ${{ inputs.staged-publish }}
-        PROVENANCE: ${{ inputs.provenance }}
         DRY_RUN: ${{ inputs.dry-run }}
         REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         GH_TOKEN: ${{ github.token }}

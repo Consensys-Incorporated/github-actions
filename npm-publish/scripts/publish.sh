@@ -11,14 +11,13 @@
 #        provenance), for the package's first publish;
 #      - without a token: pack, or fail if DRY_RUN=false.
 #   3. Package on npm (the token is unset; it interferes with OIDC):
-#      - with OIDC (ACTIONS_ID_TOKEN_REQUEST_URL): publish, staged if
-#        STAGED_PUBLISH=true, with provenance if PROVENANCE=true and the
-#        repository is public;
+#      - with OIDC (ACTIONS_ID_TOKEN_REQUEST_URL): staged publish, with
+#        provenance if the repository is public;
 #      - without OIDC: pack, or fail if DRY_RUN=false.
 #
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
-# ACTIONS_ID_TOKEN_REQUEST_URL, STAGED_PUBLISH, PROVENANCE,
-# REPOSITORY_VISIBILITY, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
+# ACTIONS_ID_TOKEN_REQUEST_URL, REPOSITORY_VISIBILITY, GITHUB_OUTPUT,
+# GITHUB_STEP_SUMMARY.
 
 set -euo pipefail
 
@@ -72,11 +71,8 @@ else
     DRY_RUN="true"
   else
     echo "$package_name is on npm. Publishing with OIDC."
-    publish_cmd=(yarn npm publish --tag "$PUBLISH_NPM_TAG")
-    if [[ "${STAGED_PUBLISH:-}" == "true" ]]; then
-      publish_cmd+=(--staged)
-    fi
-    if [[ "${PROVENANCE:-}" == "true" && "${REPOSITORY_VISIBILITY:-}" == "public" ]]; then
+    publish_cmd=(yarn npm publish --tag "$PUBLISH_NPM_TAG" --staged)
+    if [[ "${REPOSITORY_VISIBILITY:-}" == "public" ]]; then
       publish_cmd+=(--provenance)
     fi
     DRY_RUN="false"
