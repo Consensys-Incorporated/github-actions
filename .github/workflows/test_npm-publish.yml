@@ -299,7 +299,7 @@ jobs:
 
           # Control: without environment.sh the override applies, so the
           # assertion below can fail.
-          if [[ "$(yarn config get npmRegistryServer)" != "$YARN_NPM_REGISTRY_SERVER" ]]; then
+          if [[ "$(yarn config get npmRegistryServer --json | jq -r .)" != "$YARN_NPM_REGISTRY_SERVER" ]]; then
             echo "::error::YARN_NPM_REGISTRY_SERVER has no effect, so this test proves nothing."
             exit 1
           fi
@@ -312,7 +312,8 @@ jobs:
             nodeLinker=node-modules \
             enableScripts=false; do
             key="${entry%%=*}"
-            value="$(yarn config get "$key")"
+            # --json: plain output colours booleans on the runner.
+            value="$(yarn config get "$key" --json | jq -r .)"
             if [[ "$value" != "${entry#*=}" ]]; then
               echo "::error::$key is '$value', expected '${entry#*=}'."
               failed=1
