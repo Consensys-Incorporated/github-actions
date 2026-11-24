@@ -144,6 +144,36 @@ clone multi
 expect true "multi-commit push compares with BEFORE, not HEAD^" multi BEFORE="${shas[0]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES"
 expect false "single-commit comparison with HEAD^" multi BEFORE="${shas[1]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES"
 
+# With a token, the fetch gets it as an Authorization header through
+# GIT_CONFIG_* (a file:// origin ignores the header, so a git shim records it).
+build_shas token '1.1.0|Initial' '1.2.0|Bump version' '1.2.0|Release 1.2.0 (#5)'
+clone token
+mkdir -p "$WORK/shims"
+cat >"$WORK/shims/git" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == fetch ]]; then
+  echo "\${GIT_CONFIG_COUNT:-} \${GIT_CONFIG_KEY_1:-} \${GIT_CONFIG_VALUE_1:-}" >>"$WORK/git-fetch.log"
+fi
+exec $(command -v git) "\$@"
+EOF
+chmod +x "$WORK/shims/git"
+: >"$WORK/git-fetch.log"
+expect true "multi-commit push with a token" token BEFORE="${shas[0]}" COMMIT_STARTS_WITH="$OCAP_PREFIXES" \
+  GITHUB_TOKEN=secret GITHUB_SERVER_URL=https://github.example PATH="$WORK/shims:$PATH"
+expected_header="2 http.https://github.example/.extraheader AUTHORIZATION: basic $(printf 'x-access-token:secret' | base64)"
+if [[ "$(cat "$WORK/git-fetch.log")" == "$expected_header" ]]; then
+  echo "ok - the token is passed to the fetch"
+else
+  echo "not ok - the token is passed to the fetch: got '$(cat "$WORK/git-fetch.log")'"
+  echo "token header" >>"$FAILURES"
+fi
+if git -C "$WORK/token" config --get-regexp 'extraheader' >/dev/null; then
+  echo "not ok - the token is not written to .git/config"
+  echo "token config" >>"$FAILURES"
+else
+  echo "ok - the token is not written to .git/config"
+fi
+
 expect error "empty BEFORE" multi BEFORE=
 # A push that creates a branch has an all-zero before SHA. Documented limitation.
 expect error "all-zero BEFORE (new branch)" multi BEFORE=0000000000000000000000000000000000000000

@@ -11,6 +11,7 @@
 #   BEFORE: the commit to compare with (required)
 #   COMMIT_STARTS_WITH: prefixes separated by commas or newlines (optional)
 #   COMMIT_MESSAGE: message to check instead of HEAD's subject (optional)
+#   GITHUB_TOKEN: token for fetching BEFORE (optional); with GITHUB_SERVER_URL
 #
 # Outputs (to $GITHUB_OUTPUT): IS_RELEASE=true|false
 
@@ -28,10 +29,29 @@ if [[ -z "${BEFORE:-}" ]]; then
   exit 1
 fi
 
-# Fetch BEFORE in case the push contained more than one commit. Without
-# persisted credentials this fails for a private repository; BEFORE may still
-# be present (it is HEAD^ for a single-commit push with fetch-depth 2).
-if ! git fetch --quiet origin "$BEFORE"; then
+# Fetch BEFORE in case the push contained more than one commit. The checkout
+# doesn't persist credentials, so a private repository needs the token. It is
+# passed through the environment for this one command (not argv, not
+# .git/config). The empty value first clears any header a caller's checkout
+# configured for the same URL, so only one Authorization header is sent.
+fetch_before() {
+  if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+    git fetch --quiet origin "$BEFORE"
+    return
+  fi
+  local key auth
+  key="http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader"
+  auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+  echo "::add-mask::$auth"
+  GIT_CONFIG_COUNT=2 \
+    GIT_CONFIG_KEY_0="$key" GIT_CONFIG_VALUE_0="" \
+    GIT_CONFIG_KEY_1="$key" GIT_CONFIG_VALUE_1="AUTHORIZATION: basic $auth" \
+    git fetch --quiet origin "$BEFORE"
+}
+
+# BEFORE may still be present if the fetch fails (it is HEAD^ for a
+# single-commit push with fetch-depth 2).
+if ! fetch_before; then
   if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
     echo "::warning::Could not fetch $BEFORE; using the copy already in the repository."
   else

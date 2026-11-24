@@ -23,6 +23,13 @@ inputs:
     description: 'The commit to compare with. Defaults to the push event''s `before`.'
     required: false
     default: ${{ github.event.before }}
+  github-token:
+    description: >-
+      Token used only to fetch `before` when the push contained more than one
+      commit. Needs `contents: read`. It is passed to that one `git fetch` and
+      not stored in `.git/config`.
+    required: false
+    default: ${{ github.token }}
   skip-checkout:
     description: >-
       `true` to reuse the caller's checkout, which must have `before`
@@ -52,6 +59,7 @@ runs:
       shell: bash
       env:
         BEFORE: ${{ inputs.before }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
         COMMIT_STARTS_WITH: ${{ inputs.commit-starts-with }}
         COMMIT_MESSAGE: ${{ inputs.commit-message }}
         ACTION_PATH: ${{ github.action_path }}
