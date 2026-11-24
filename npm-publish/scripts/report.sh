@@ -18,8 +18,10 @@ for file in "$PACK_DIR"/*.tgz; do
   echo "Processing $file"
   name="$(tar -O -zxf "$file" package/package.json | jq --raw-output .name)"
   echo "$name"
-  pkdiff "$file" "$name@latest" \
+  # `--` so that a name starting with `-` isn't read as an option.
+  pkdiff \
     --no-exit-code \
     --no-open \
-    --output "$PACK_DIR/$(basename "$file").html" || true
+    --output "$PACK_DIR/$(basename "$file").html" \
+    -- "$file" "$name@latest" || true
 done

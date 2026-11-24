@@ -16,12 +16,17 @@ failures=0
 
 mkdir -p "$SHIMS"
 
-# npm: `npm view <spec> version --json` prints a version iff <spec> is a line
-# of $NPM_PUBLISHED, fails with E500 if the file has a "!error" line, and with
-# E404 otherwise.
+# npm: `npm view [options] -- <spec> version` prints a version iff <spec> is a
+# line of $NPM_PUBLISHED, fails with E500 if the file has a "!error" line, and
+# with E404 otherwise. Fails if <spec> doesn't follow `--`.
 cat >"$SHIMS/npm" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "view" ]]; then
+  while (($# > 0)) && [[ "$1" != "--" ]]; do shift; done
+  if (($# < 2)); then
+    echo "npm shim: no -- before the spec" >&2
+    exit 1
+  fi
   if grep -qxF -- "$2" "$NPM_PUBLISHED"; then
     echo '"1.0.0"'
     exit 0

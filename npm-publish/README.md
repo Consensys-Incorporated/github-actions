@@ -108,7 +108,8 @@ fails the action before anything else runs.
   provenance for public repositories.
 - No Slack notification: upstream posts an "awaiting deployment" Slack message; this port
   doesn't, so `slack-webhook-url`, `channel`, `subteam`, `username` and `icon-url` are removed.
-- Publish commands are bash arrays, not strings split on spaces.
+- Publish commands are bash arrays, not strings split on spaces, and `npm view` and `pkdiff` get
+  package names after `--`, so that a name starting with `-` isn't read as an option.
 - The artifact has an explicit name, overwritten by a second dry run in the same workflow run.
 - `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies, and with
   `--ignore-scripts`, since its dependencies aren't pinned.

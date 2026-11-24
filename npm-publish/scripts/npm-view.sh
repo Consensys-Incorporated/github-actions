@@ -13,9 +13,10 @@ set -euo pipefail
 spec="$1"
 
 # Run from /tmp so that Corepack does not detect Yarn and no .npmrc in the
-# repository applies.
+# repository applies. `--` so that a spec starting with `-` isn't read as an
+# option.
 set +e
-output="$(cd /tmp && npm view "$spec" version --workspaces false --json 2>/dev/null)"
+output="$(cd /tmp && npm view --workspaces false --json -- "$spec" version 2>/dev/null)"
 status=$?
 set -e
 
