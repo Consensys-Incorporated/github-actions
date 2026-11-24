@@ -38,11 +38,11 @@ inputs:
   username:
     description: 'Name of the bot in Slack.'
     required: false
-    default: 'MetaMask bot'
+    default: npm-publish
   icon-url:
     description: 'Avatar URL of the bot in Slack.'
     required: false
-    default: 'https://raw.githubusercontent.com/MetaMask/action-npm-publish/main/robo.png'
+    default: ''
 
 runs:
   using: composite
@@ -87,54 +87,29 @@ runs:
           /tmp/*.tgz
           /tmp/*.html
 
-    - name: Generate Slack publish message (1/2)
-      id: name-version
+    - name: Generate Slack payload
+      id: slack-payload
+      if: ${{ inputs.slack-webhook-url != '' }}
+      continue-on-error: true
       shell: bash
-      if: inputs.slack-webhook-url != ''
-      run: |
-        NAME_VERSION_TEXT=$(jq --raw-output '.name + "@" + .version' package.json )
-        NAME_VERSION_TEXT_STRIPPED="${NAME_VERSION_TEXT#@}"
-        echo "NAME_VERSION=$NAME_VERSION_TEXT_STRIPPED" >> "$GITHUB_OUTPUT"
-    - name: Generate Slack publish message (2/2)
-      id: final-text
-      shell: bash
-      if: inputs.slack-webhook-url != ''
       env:
-        NAME_VERSION: ${{ steps.name-version.outputs.NAME_VERSION }}
-        SUBTEAM_TEXT: ${{ inputs.subteam }}
+        PAYLOAD_FILE: ${{ runner.temp }}/npm-publish-slack-payload.json
+        SERVER_URL: ${{ github.server_url }}
         REPOSITORY: ${{ github.repository }}
         RUN_ID: ${{ github.run_id }}
-      run: |
-        DEFAULT_TEXT="\`$NAME_VERSION\` is awaiting deployment :rocket: \n <https://github.com/$REPOSITORY/actions/runs/$RUN_ID/|→ Click here to review deployment> \n <https://www.notion.so/metamask-consensys/NPM-publishing-with-OIDC-374f86d67d68805583e9f824ff5ff18e#374f86d67d68807da68cf75485fd70d2|→ See instructions for approving staged packages here>"
-        FINAL_TEXT="$DEFAULT_TEXT"
-        if [[ ! "$SUBTEAM_TEXT" == "" ]]; then
-          FINAL_TEXT="<!subteam^$SUBTEAM_TEXT> $DEFAULT_TEXT"
-        fi
-        echo "FINAL_TEXT=$FINAL_TEXT" >> "$GITHUB_OUTPUT"
-    - name: Post to a Slack channel
-      if: ${{ inputs.slack-webhook-url != '' && inputs.channel != '' }}
-      uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c
+        SLACK_SUBTEAM: ${{ inputs.subteam }}
+        SLACK_USERNAME: ${{ inputs.username }}
+        SLACK_ICON_URL: ${{ inputs.icon-url }}
+        SLACK_CHANNEL: ${{ inputs.channel }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/slack-payload.sh"'
+
+    - name: Post to Slack
+      if: ${{ inputs.slack-webhook-url != '' && steps.slack-payload.outcome == 'success' }}
+      continue-on-error: true
+      uses: slackapi/slack-github-action@0bc3581177d9a0f8d555e07689384b376528e8fa # v4.1.0
       with:
         webhook: ${{ inputs.slack-webhook-url }}
         webhook-type: incoming-webhook
-        payload: |
-          {
-            "text": "${{ steps.final-text.outputs.FINAL_TEXT }}",
-            "icon_url": "${{ inputs.icon-url }}",
-            "username": "${{ inputs.username }}",
-            "channel": "#${{ inputs.channel }}"
-          }
-      continue-on-error: true
-    - name: Post to a default Slack channel
-      if: ${{ inputs.slack-webhook-url != '' && inputs.channel == '' }}
-      uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c
-      with:
-        webhook: ${{ inputs.slack-webhook-url }}
-        webhook-type: incoming-webhook
-        payload: |
-          {
-            "text": "${{ steps.final-text.outputs.FINAL_TEXT }}",
-            "icon_url": "${{ inputs.icon-url }}",
-            "username": "${{ inputs.username }}"
-          }
-      continue-on-error: true
+        payload-file-path: ${{ runner.temp }}/npm-publish-slack-payload.json
+        retries: rapid
