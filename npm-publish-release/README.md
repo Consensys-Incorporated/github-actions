@@ -16,6 +16,12 @@ Run it after checking out the commit the workflow runs on (`github.sha`), in a j
 `contents: write`. The release targets `github.sha` and the tags go on `HEAD`, so the action
 fails before creating anything if they differ.
 
+The action needs only bash, git, jq, `gh` and openssl, which GitHub-hosted runners provide; it
+does not need Node.js or an install. Nothing from the repository may run earlier in the job: no
+install, build or repository script. Such code could change what later steps run, through
+`$GITHUB_ENV` or `$GITHUB_PATH`, or change the files this action reads, while the job holds a
+token with `contents: write`. Build and publish in other jobs.
+
 ```yaml
 jobs:
   publish-release:
@@ -23,9 +29,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: Consensys-Incorporated/github-actions/node-checkout-and-setup@<sha> # <tag>
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          is-high-risk-environment: true
+          persist-credentials: false
       - uses: Consensys-Incorporated/github-actions/npm-publish-release@<sha> # <tag>
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +105,11 @@ heading or the first link reference definition, with blank lines trimmed at both
 ## Security
 
 - No Yarn, npm or Node.js command runs, so no repository-controlled code (Yarn plugins, scripts)
-  runs while the token has `contents: write`.
+  runs while the token has `contents: write`. The job must not run any earlier (see
+  [Usage](#usage)).
+- `BASH_ENV`, `ENV` and `NODE_OPTIONS` are cleared in the action's steps, so values that an
+  earlier step wrote to `$GITHUB_ENV` do not run code there. This does not protect against
+  `$GITHUB_PATH` or other changes an earlier step can make.
 - Manifest and changelog values reach commands as quoted shell variables, never through `${{ }}`.
 - The only tags created are `<name>@<version>` for released packages, with SemVer versions.
 - `RELEASE_NOTES` is exported with a random delimiter, so changelog text cannot end the value
@@ -109,5 +119,5 @@ heading or the first link reference definition, with blank lines trimmed at both
 
 `test/fixtures.sh` tests the scripts against fixture repositories with `gh` and `git push`
 replaced by shims. `.github/workflows/test_npm-publish-release.yml` runs it, runs the action in a
-fixture workspace, and checks parity with the published `v7.0.0` release of
+fixture workspace (with a `BASH_ENV` set by an earlier step, which must not run), and checks parity with the published `v7.0.0` release of
 `Consensys-Incorporated/ocap-kernel`.

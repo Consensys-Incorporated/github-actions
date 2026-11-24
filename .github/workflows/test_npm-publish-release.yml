@@ -40,9 +40,15 @@ jobs:
             [[ "${file##*/}" == .git ]] || mv "$file" .
           done
           echo "$dir.shims" >>"$GITHUB_PATH"
+          # A BASH_ENV that an earlier step set must not run in the action's
+          # steps, which are the only ones with ACTION_PATH set.
+          cat >"$RUNNER_TEMP/bash-env.sh" <<'EOF'
+          if [[ -n "${ACTION_PATH:-}" ]]; then touch "$RUNNER_TEMP/bash-env-ran"; fi
+          EOF
           {
             echo "SHIM_LOG=$RUNNER_TEMP/shim.log"
             echo "EXISTING_TAGS=$dir.existing-tags"
+            echo "BASH_ENV=$RUNNER_TEMP/bash-env.sh"
           } >>"$GITHUB_ENV"
           git config user.name test
           git config user.email test@example.com
@@ -59,6 +65,10 @@ jobs:
           grep -q "^gh release create v3.0.0 --title 3.0.0 --notes-file .* --target $GITHUB_SHA\$" "$SHIM_LOG"
           grep -q '^git push https://x-access-token:.*@github.com/.* refs/tags/@octo/a@1.1.0 refs/tags/@octo/b@2.0.0$' "$SHIM_LOG"
           [[ "$(git tag --points-at HEAD | tr '\n' ' ')" == "@octo/a@1.1.0 @octo/b@2.0.0 " ]]
+          if [[ -e "$RUNNER_TEMP/bash-env-ran" ]]; then
+            echo "::error::The action's steps sourced BASH_ENV."
+            exit 1
+          fi
       - name: Assert RELEASE_NOTES reaches later steps intact
         run: |
           if [[ "$RELEASE_NOTES" != "$(cat "$SHIM_LOG.notes")" ]]; then
