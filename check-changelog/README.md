@@ -54,7 +54,8 @@ package through the workspace patterns that contain `*`. Ignored: files under
 `package.json` (not a nested one) is ignored if only its `version` changed, only its
 `devDependencies` changed (with or without a version change), or the version went down (a
 revert). If its version went up along with other changes, the package's changelog section for
-the new version is checked instead of `Unreleased`; that section must exist. Every changed package is checked and every failure reported.
+the new version is checked instead of `Unreleased`; that section must exist. Every changed
+package is checked and every failure reported.
 
 **Single package** (no `workspaces`): the root `CHANGELOG.md`'s `Unreleased` section must link
 the pull request.
@@ -109,4 +110,5 @@ test/fixtures.sh      # end-to-end runs against fixture git repositories
 
 `.github/workflows/test_check-changelog.yml` runs these, checks that the `no-changelog` label
 skips the checkout, and runs the action against a merged `Consensys-Incorporated/ocap-kernel`
-pull request. The fixture tests were also run against upstream's script, with the same results.
+pull request. Run against upstream's script, the fixture tests pass or fail the same way except
+in the cases covering the differences listed above.
