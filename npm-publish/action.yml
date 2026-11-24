@@ -39,7 +39,6 @@ runs:
       env:
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
         DRY_RUN: ${{ inputs.dry-run }}
       run: |
         if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" && -n "$DRY_RUN" ]]; then
@@ -53,10 +52,11 @@ runs:
       env:
         # An earlier step in the job may set these through $GITHUB_ENV to run
         # code in this step. They must be cleared in the step's environment:
-        # bash reads BASH_ENV before the script starts.
+        # bash reads BASH_ENV before the script starts. (The runner refuses
+        # NODE_OPTIONS from $GITHUB_ENV, so it can come only from the
+        # caller's own workflow.)
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
         YARN_IGNORE_PATH: '1'
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/sanitize.sh"'
@@ -68,7 +68,6 @@ runs:
       env:
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
         GH_TOKEN: ${{ github.token }}
       run: |
         pr_url="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
@@ -83,7 +82,6 @@ runs:
       env:
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
         YARN_IGNORE_PATH: '1'
         YARN_RC_FILENAME: ${{ steps.sanitize.outputs.yarn-rc-filename }}
         YARN_NPM_AUTH_TOKEN: ${{ inputs.npm-token }}
@@ -105,7 +103,6 @@ runs:
       env:
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
       run: npm i -g --ignore-scripts --registry https://registry.npmjs.org pkdiff@2.0.1
 
     - name: Generate package diff report
@@ -115,7 +112,6 @@ runs:
       env:
         BASH_ENV: ''
         ENV: ''
-        NODE_OPTIONS: ''
         PACK_DIR: ${{ runner.temp }}/npm-publish-packages
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/report.sh"'
@@ -123,8 +119,6 @@ runs:
     - name: Upload packages and report
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-      env:
-        NODE_OPTIONS: ''
       with:
         name: npm-publish-dry-run-${{ github.sha }}
         # Names are unique per workflow run; a second dry run in the same run

@@ -147,8 +147,9 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 - Versions must be strict semantic versions (`MAJOR.MINOR.PATCH`, with optional prerelease and
   build metadata). A version with a `v` prefix, such as `v1.2.3`, fails the action. Upstream
   doesn't check versions.
-- The action's steps set `BASH_ENV`, `ENV` and `NODE_OPTIONS` to empty values, so that an earlier
-  step can't make them run code through `$GITHUB_ENV`.
+- The action's steps set `BASH_ENV` and `ENV` to empty values, so that an earlier step can't make
+  them run code through `$GITHUB_ENV`. The runner refuses `NODE_OPTIONS` from `$GITHUB_ENV`, so it
+  can come only from the caller's own workflow, and the action leaves it alone.
 - With `RUNNER_DEBUG`, `main.sh`, `publish.sh` and `needs-publish.sh` don't trace commands
   (`set -x`): their environment holds the token, which GitHub masks only if it came from a secret.
 - Package names, versions and workspace locations are validated (see Behavior), names and
@@ -165,7 +166,8 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 
 - No repository-controlled code runs from the sanitize step onward: no repository `.yarnrc.yml`,
   Yarn plugins, `yarnPath`, lifecycle scripts, `YARN_*` overrides, `.corepack.env` or package bins,
-  and no `BASH_ENV`, `ENV` or `NODE_OPTIONS` from earlier steps.
+  and no `BASH_ENV` or `ENV` from earlier steps (the runner refuses `NODE_OPTIONS` from
+  `$GITHUB_ENV`).
 - Packages are published only to `https://registry.npmjs.org`, and looked up only there. `pkdiff`
   is installed from there too; its diff report can follow a scope's registry (see above).
 - The token is used only for a package's first publish; existing packages publish only with OIDC,
@@ -187,7 +189,7 @@ the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and ru
 real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures without
 credentials, a foreign registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step),
 a polyrepo, a project whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins
-would write marker files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that a dry
+would write marker files, as would `BASH_ENV` set in `$GITHUB_ENV`, that a dry
 run with `npm_config_registry` and a scope's registry set to an unreachable host in `$GITHUB_ENV`
 still looks packages up on, and installs `pkdiff` from, `https://registry.npmjs.org`, that `YARN_*`
 overrides such as `YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads,
