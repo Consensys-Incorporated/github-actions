@@ -190,6 +190,11 @@ jobs:
           grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
           grep -qx "package-json-path=" "$GITHUB_OUTPUT"
 
+      # The high-risk job below can't tell whether "Restore Yarn cache" ran, so
+      # check the conditions of all cache steps in action.yml instead.
+      - name: Every cache step in action.yml is skipped in high-risk mode
+        run: node-checkout-and-setup/test/check-cache-guards.sh
+
   # ---------------------------------------------------------------------------
   # Input validation
   # ---------------------------------------------------------------------------

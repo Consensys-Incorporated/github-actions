@@ -112,6 +112,12 @@ Yarn 4 workspace using the LavaMoat `allow-scripts` plugin. Its `allow-scripts-m
 allowed `postinstall` script writes `.allow-scripts-ran` in the workspace root, so tests can tell
 whether `allow-scripts` ran.
 
+A job can't observe whether a cache step was skipped, so `test/check-cache-guards.sh` checks
+`action.yml` instead: every step that can read or write the Actions cache must have
+`inputs.is-high-risk-environment == 'false'` in its `if:`, and every `actions/setup-node` step must
+set `package-manager-cache: false` or have that condition too. It uses `yq` and `jq`, which GitHub's
+Ubuntu runners include.
+
 Some tests need the fixture at the root of a ref of this repository. After changing
 `test-fixture/`, commit, then run `test/publish-fixture.sh` to update the
 `test-fixtures/node-checkout-and-setup` branch.
