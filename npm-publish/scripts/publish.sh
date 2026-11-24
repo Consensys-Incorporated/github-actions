@@ -31,6 +31,11 @@ script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$script_path/environment.sh"
 
 DRY_RUN="${DRY_RUN:-}"
+# action.yml checks this too, before anything runs.
+if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" && -n "$DRY_RUN" ]]; then
+  echo "::error::'dry-run' must be 'true', 'false' or empty."
+  exit 1
+fi
 : "${PACK_DIR:?PACK_DIR must be set}"
 YARN_NPM_AUTH_TOKEN="${YARN_NPM_AUTH_TOKEN:-}"
 

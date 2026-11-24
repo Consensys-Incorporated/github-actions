@@ -155,6 +155,11 @@ check "npm lookup error other than 404: fails without publishing" failed_with "'
 run_publish yes DRY_RUN=false YARN_NPM_AUTH_TOKEN=token
 check "existing package without OIDC, dry-run false: fails" failed_with "OIDC is not available"
 
+for value in True yes 1; do
+  run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc DRY_RUN="$value"
+  check "dry-run '$value' fails without publishing" failed_with "'dry-run' must be 'true', 'false' or empty"
+done
+
 run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc PUBLISH_NPM_TAG='beta tag'
 check "npm-tag is passed as one argument" \
   published_with 'yarn npm publish --tag beta\ tag --staged --provenance [token=]'

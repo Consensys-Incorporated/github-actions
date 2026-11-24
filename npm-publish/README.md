@@ -65,7 +65,8 @@ the committed `yarn.lock`.
 | `npm-tag`   | `latest` | The dist-tag. Must not be empty.                                                                                 |
 
 Set `dry-run` explicitly on both jobs: with it unset, a publish job whose OIDC grant is missing
-packs and passes instead of failing.
+packs and passes instead of failing. Any value of `dry-run` other than `true`, `false` or empty
+fails the action before anything else runs.
 
 ## Outputs
 
@@ -114,6 +115,7 @@ packs and passes instead of failing.
 - A single-package repository publishes only if its root isn't private and its version isn't on
   npm yet, so re-running a release doesn't fail on an existing version.
 - Lifecycle scripts are removed from private workspaces too.
+- `dry-run` must be `true`, `false` or empty. Upstream publishes for any value other than `true`.
 - `dry-run` is `true` if any package was packed, whatever order the packages were handled in.
 - `publish.sh` runs directly in each workspace, not through `yarn workspaces foreach exec`, which
   puts the bins of the workspace and its dependencies first on `PATH`: a package declaring a
@@ -139,14 +141,14 @@ packs and passes instead of failing.
 
 ## Tests
 
-`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims, and that a monorepo's
-workspaces are handled in Yarn's order and stop at the first failure.
+`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims, that an invalid `dry-run`
+fails, and that a monorepo's workspaces are handled in Yarn's order and stop at the first failure.
 `test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
 except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
 the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
 real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures without
-credentials, a foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath`, lifecycle
-scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, as would `BASH_ENV` and
-`NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*` overrides such as `YARN_NPM_REGISTRY_SERVER`
-don't change the configuration the Publish step reads, and that `YARN_RC_FILENAME` isn't set in the
-caller's later steps.
+credentials, a foreign registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step),
+a polyrepo, a project whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins
+would write marker files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*`
+overrides such as `YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads,
+and that `YARN_RC_FILENAME` isn't set in the caller's later steps.

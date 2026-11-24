@@ -124,14 +124,22 @@ jobs:
           [[ -z "$(find "$RUNNER_TEMP" -name '*.tgz')" ]]
 
   rejected:
-    name: Rejected (${{ matrix.kind }})
+    name: Rejected (${{ matrix.kind }}, dry-run ${{ matrix.dry-run }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # registry: publishConfig.registry points elsewhere.
         # old-yarn: Yarn 4.15.0.
-        kind: [registry, old-yarn]
+        # invalid dry-run: rejected before anything runs.
+        include:
+          - kind: registry
+            dry-run: 'true'
+          - kind: old-yarn
+            dry-run: 'true'
+          - kind: monorepo
+            dry-run: 'yes'
+            before-sanitize: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -152,13 +160,17 @@ jobs:
         continue-on-error: true
         uses: ./actions-repo/npm-publish
         with:
-          dry-run: true
+          dry-run: ${{ matrix.dry-run }}
       - name: Assert failure
         env:
           OUTCOME: ${{ steps.action.outcome }}
         run: |
           [[ "$OUTCOME" == "failure" ]]
           [[ -z "$(find "$RUNNER_TEMP" -name '*.tgz')" ]]
+      - name: Assert the sanitize step did not run
+        if: ${{ matrix.before-sanitize }}
+        run: |
+          [[ -z "$(find "$(dirname "$GITHUB_WORKSPACE")" -maxdepth 1 -name '.yarnrc-*.yml')" ]]
 
   polyrepo:
     name: Polyrepo packs the root package
