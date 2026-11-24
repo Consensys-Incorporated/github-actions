@@ -214,6 +214,19 @@ env_value() {
   ' "$1"
 }
 
+# workflow_commands <log>: prints the lines of <log> that the runner would
+# run as workflow commands. The runner splits output at CR as well as LF,
+# ignores leading whitespace, and runs nothing between ::stop-commands::<token>
+# and ::<token>::.
+workflow_commands() {
+  tr '\r' '\n' <<<"$1" | awk '
+    { sub(/^[[:space:]]+/, "") }
+    stop != "" { if ($0 == "::" stop "::") stop = ""; next }
+    /^::stop-commands::/ { stop = substr($0, 18); next }
+    /^(::|##\[)/ { print }
+  '
+}
+
 expect_prepare_failure() {
   local test_name="$1" pattern="$2"
   if ((PREPARE_STATUS != 0)) && grep -qF -- "$pattern" <<<"$PREPARE_LOG"; then
@@ -489,6 +502,45 @@ test_config_errors() {
   expect_prepare_failure "duplicate workspace names fail" "Duplicate workspace name @octo/a"
 }
 
+# Changelog lines and other repository text must not reach the log as
+# workflow commands.
+test_workflow_commands() {
+  local dir="$WORK/commands" commands
+  (
+    monorepo_fixture "$dir"
+    changelog packages/a/CHANGELOG.md 1.1.0 $'- Entry\n::warning::from a line\n  ::warning::indented\n- x\r::warning::after CR\n##[warning]legacy' 1.0.0 '- Initial release'
+    jq '.repository.url = "https://github.com/octo/repo\n::warning::from the URL"' package.json >p && mv p package.json
+    git commit -q -am "Injection"
+  )
+  run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS == 0)) && [[ -z "$commands" ]] && grep -qF '::warning::from a line' <<<"$PREPARE_LOG"; then
+    pass "workflow commands: none from release notes or the repository URL"
+  else
+    fail "workflow commands: none from release notes or the repository URL" "status $PREPARE_STATUS" "commands: $commands" "$PREPARE_LOG"
+  fi
+
+  dir="$WORK/commands-error"
+  (monorepo_fixture "$dir" && root_manifest $'3.0\n::warning::from the version' && git commit -q -am "Bad version")
+  run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS != 0)) && [[ "$commands" == "::error::The root package.json version '3.0%0A::warning::from the version' is not a valid SemVer version." ]]; then
+    pass "workflow commands: invalid values are escaped in errors"
+  else
+    fail "workflow commands: invalid values are escaped in errors" "status $PREPARE_STATUS" "commands: $commands"
+  fi
+
+  dir="$WORK/commands-path"
+  (monorepo_fixture "$dir" && pkg $'packages/x\n::warning::from a path' @octo/x 1.0.0 && git add -A && git commit -q -m "Bad path")
+  run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS != 0)) && [[ "$commands" == "::error::Workspace path 'packages/x%0A::warning::from a path' contains a control character." ]]; then
+    pass "workflow commands: workspace paths with control characters fail"
+  else
+    fail "workflow commands: workspace paths with control characters fail" "status $PREPARE_STATUS" "commands: $commands"
+  fi
+}
+
 test_head_mismatch() {
   local dir="$WORK/head-mismatch" release_commit
   (monorepo_fixture "$dir")
@@ -626,6 +678,7 @@ test_missing_section
 test_nothing_to_release
 test_lookup_error
 test_config_errors
+test_workflow_commands
 test_head_mismatch
 test_rerun
 test_rerun_conflicts

@@ -88,7 +88,8 @@ heading or the first link reference definition, with blank lines trimmed at both
   blank line after `###` headings. CRLF changelogs are read.
 - An empty changelog section for a released package fails, as an empty root section does.
 - Workspace listing supports `<dir>/*` and literal patterns only, and fails on others instead of
-  globbing them. Workspace names must be valid npm package names.
+  globbing them. Workspace names must be valid npm package names, and workspace paths must not
+  contain control characters.
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
 - The notes are passed with `--notes-file` instead of as an argument.
@@ -112,6 +113,10 @@ heading or the first link reference definition, with blank lines trimmed at both
   `$GITHUB_PATH` or other changes an earlier step can make.
 - Manifest and changelog values reach commands as quoted shell variables, never through `${{ }}`.
 - The only tags created are `<name>@<version>` for released packages, with SemVer versions.
+- Repository text cannot start a workflow command in the log. The release notes are printed
+  between `::stop-commands::<random token>` and `::<random token>::`. Names and versions are
+  validated before they are printed; other values from the repository are printed with `%`, CR
+  and LF percent-encoded, so they stay on one line. Workspace paths with control characters fail.
 - `RELEASE_NOTES` is exported with a random delimiter, so changelog text cannot end the value
   early or set other variables.
 

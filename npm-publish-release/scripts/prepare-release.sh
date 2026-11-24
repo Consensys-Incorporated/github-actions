@@ -29,18 +29,18 @@ packages_file="$RELEASE_DIR/packages.tsv"
 
 release_version="$(jq -r '.version // empty' package.json)"
 if ! is_semver "$release_version"; then
-  echo "::error::The root package.json version '$release_version' is not a valid SemVer version."
+  echo "::error::The root package.json version '$(escape_data "$release_version")' is not a valid SemVer version."
   exit 1
 fi
 
 repository_url="$(jq -r '.repository | objects | .url // empty' package.json)"
 if [[ "$repository_url" != https://* && "$repository_url" != git+https://* ]]; then
-  echo "::error::The root package.json repository.url '$repository_url' must be an https: or git+https: URL."
+  echo "::error::The root package.json repository.url '$(escape_data "$repository_url")' must be an https: or git+https: URL."
   exit 1
 fi
 repository_url="${repository_url#git+}"
 repository_url="${repository_url%.git}"
-echo "Repository: $repository_url"
+echo "Repository: $(escape_data "$repository_url")"
 
 echo "release-version=$release_version" >>"$GITHUB_OUTPUT"
 
@@ -65,7 +65,7 @@ else
   fi
   strategy="$(jq -r '.versioningStrategy // empty' release.config.json)"
   if [[ "$strategy" != "independent" ]]; then
-    echo "::error::release.config.json versioningStrategy is '$strategy'. Only 'independent' is supported."
+    echo "::error::release.config.json versioningStrategy is '$(escape_data "$strategy")'. Only 'independent' is supported."
     exit 1
   fi
 
@@ -80,7 +80,7 @@ else
     if [[ "$err" == *"HTTP 404"* ]]; then
       return 1
     fi
-    echo "::error::Could not look up tag $tag: $err"
+    echo "::error::Could not look up tag $tag: $(escape_data "$err")"
     exit 1
   }
 
@@ -93,7 +93,7 @@ else
 
     if [[ -n "$name" ]]; then
       if [[ -n "${seen_names[$name]:-}" ]]; then
-        echo "::error::Duplicate workspace name $name: $location conflicts with ${seen_names[$name]}."
+        echo "::error::Duplicate workspace name $(escape_data "$name"): $location conflicts with ${seen_names[$name]}."
         exit 1
       fi
       seen_names[$name]="$location"
@@ -107,13 +107,13 @@ else
       exit 1
     fi
     if ! is_semver "$version"; then
-      echo "::error::$manifest version '$version' is not a valid SemVer version."
+      echo "::error::$manifest version '$(escape_data "$version")' is not a valid SemVer version."
       exit 1
     fi
     # The name goes into a tag, an API path and packages.tsv, so it must be a
     # valid npm package name.
     if [[ ! "$name" =~ ^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$ ]]; then
-      echo "::error::$manifest name '$name' is not a valid npm package name."
+      echo "::error::$manifest name '$(escape_data "$name")' is not a valid npm package name."
       exit 1
     fi
 
@@ -159,8 +159,13 @@ if [[ -z "$(tr -d '[:space:]' <"$notes_file")" ]]; then
   exit 1
 fi
 
+# The notes are free text from the changelogs: print them with workflow
+# commands stopped, so that a line in them cannot run one.
+stop_token="$(openssl rand -hex 16)"
 echo "Release notes:"
-cat "$notes_file"
+echo "::stop-commands::$stop_token"
+printf '%s\n' "$(cat "$notes_file")"
+echo "::$stop_token::"
 
 # Export the notes with a random delimiter that cannot occur in them.
 delimiter="EOF_$(openssl rand -hex 16)"

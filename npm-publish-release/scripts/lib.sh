@@ -12,6 +12,19 @@ is_semver() {
   [[ "$1" =~ $SEMVER_RE ]]
 }
 
+# escape_data <value>
+#
+# Prints <value> with %, CR and LF percent-encoded, as the runner decodes
+# workflow command values. Repository text printed with it stays on one line,
+# so it cannot start a workflow command of its own.
+escape_data() {
+  local value="$1"
+  value="${value//%/%25}"
+  value="${value//$'\r'/%0D}"
+  value="${value//$'\n'/%0A}"
+  printf '%s' "$value"
+}
+
 # workspace_children <root> <dir>
 #
 # Prints the directories (relative to <root>) matched by the "workspaces"
@@ -33,7 +46,7 @@ workspace_children() {
     | .[]
     | if type == "string" then . else error("workspace patterns must be strings") end
   ' "$root/$dir/package.json")" || {
-    echo "::error::Could not read the workspaces of $dir/package.json." >&2
+    echo "::error::Could not read the workspaces of $(escape_data "$dir")/package.json." >&2
     return 1
   }
 
@@ -41,7 +54,7 @@ workspace_children() {
     [[ -n "$pattern" ]] || continue
     pattern="${pattern#./}"
     if [[ "$pattern" =~ (^|/)\.\.(/|$) ]]; then
-      echo "::error::Unsupported workspace pattern '$pattern' in $dir/package.json: '..' is not supported." >&2
+      echo "::error::Unsupported workspace pattern '$(escape_data "$pattern")' in $(escape_data "$dir")/package.json: '..' is not supported." >&2
       return 1
     elif [[ "$pattern" =~ ^[^*?{}!\[]+/\*$ ]]; then
       base="${pattern%/\*}"
@@ -62,10 +75,19 @@ workspace_children() {
         children+=("$prefix$pattern")
       fi
     else
-      echo "::error::Unsupported workspace pattern '$pattern' in $dir/package.json. Only '<dir>/*' and literal paths are supported." >&2
+      echo "::error::Unsupported workspace pattern '$(escape_data "$pattern")' in $(escape_data "$dir")/package.json. Only '<dir>/*' and literal paths are supported." >&2
       return 1
     fi
   done <<<"$patterns"
+
+  # Workspace paths are printed, and written one per line and tab-separated
+  # to packages.tsv, so they must not contain control characters.
+  for child in "${children[@]}"; do
+    if [[ "$child" =~ [[:cntrl:]] ]]; then
+      echo "::error::Workspace path '$(escape_data "$child")' contains a control character." >&2
+      return 1
+    fi
+  done
 
   if ((${#children[@]} > 0)); then
     printf '%s\n' "${children[@]}" | LC_ALL=C sort -u

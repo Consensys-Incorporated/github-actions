@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+# shellcheck source=SCRIPTDIR/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
   set -x
 fi
@@ -68,7 +71,7 @@ release_tag="v$RELEASE_VERSION"
 error_file="$RELEASE_DIR/gh-error"
 if target="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" --jq .target_commitish 2>"$error_file")"; then
   if [[ "$target" != "$RELEASE_COMMIT_ID" ]]; then
-    echo "::error::Release $release_tag already exists with target '$target', not the release commit $RELEASE_COMMIT_ID."
+    echo "::error::Release $release_tag already exists with target '$(escape_data "$target")', not the release commit $RELEASE_COMMIT_ID."
     exit 1
   fi
   echo "Release $release_tag already exists at $RELEASE_COMMIT_ID: not creating it again."
@@ -78,7 +81,7 @@ elif grep -qF "HTTP 404" "$error_file"; then
     --notes-file "$notes_file" \
     --target "$RELEASE_COMMIT_ID"
 else
-  echo "::error::Could not look up release $release_tag: $(cat "$error_file")"
+  echo "::error::Could not look up release $release_tag: $(escape_data "$(cat "$error_file")")"
   exit 1
 fi
 
