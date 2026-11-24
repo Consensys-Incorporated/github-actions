@@ -128,6 +128,8 @@ fails the action before anything else runs.
   any URL as the Yarn to download and run.
 - The action's steps set `BASH_ENV`, `ENV` and `NODE_OPTIONS` to empty values, so that an earlier
   step can't make them run code through `$GITHUB_ENV`.
+- With `RUNNER_DEBUG`, `main.sh`, `publish.sh` and `needs-publish.sh` don't trace commands
+  (`set -x`): their environment holds the token, which GitHub masks only if it came from a secret.
 - The release pull request is looked up in its own step, so `GH_TOKEN` is not in the Publish
   step's environment.
 - The generated Yarn configuration is passed to the action's own steps only. Upstream writes
@@ -146,13 +148,14 @@ fails the action before anything else runs.
 ## Tests
 
 `test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims, that an invalid `dry-run`
-fails, and that a monorepo's workspaces are handled in Yarn's order and stop at the first failure.
-`test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
-except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
-the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
-real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures without
-credentials, a foreign registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step),
-a polyrepo, a project whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins
-would write marker files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*`
-overrides such as `YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads,
-and that `YARN_RC_FILENAME` isn't set in the caller's later steps.
+fails, that `RUNNER_DEBUG` doesn't print the token, and that a monorepo's workspaces are handled in
+Yarn's order and stop at the first failure. `test/environment-variables.sh` tests that
+`scripts/environment.sh` unsets every `YARN_*` variable except the action's own, and that real
+Corepack then ignores a `.corepack.env` that allows a URL as the `packageManager`.
+`.github/workflows/test_npm-publish.yml` runs both, and runs the action with real Yarn against
+fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a foreign
+registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step), a polyrepo, a project
+whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker
+files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*` overrides such as
+`YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads, and that
+`YARN_RC_FILENAME` isn't set in the caller's later steps.

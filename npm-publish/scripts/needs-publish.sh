@@ -8,9 +8,8 @@
 
 set -euo pipefail
 
-if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
-  set -x
-fi
+# No xtrace with RUNNER_DEBUG: the environment holds the npm token, which
+# GitHub masks in the log only if it came from a secret.
 
 # Tolerate empty invocations (e.g. xargs with no input).
 if (($# == 0)); then

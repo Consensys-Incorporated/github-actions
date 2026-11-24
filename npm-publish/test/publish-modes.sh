@@ -160,6 +160,14 @@ for value in True yes 1; do
   check "dry-run '$value' fails without publishing" failed_with "'dry-run' must be 'true', 'false' or empty"
 done
 
+no_token_in_log() {
+  ((STATUS == 0)) && [[ -s "$WORK/shim.log" ]] && ! grep -qF -- "$1" <<<"$LOG"
+}
+run_publish no RUNNER_DEBUG=1 YARN_NPM_AUTH_TOKEN=npm_secret_value
+check "RUNNER_DEBUG=1: publish.sh doesn't print the token" no_token_in_log npm_secret_value
+run_publish yes RUNNER_DEBUG=1 YARN_NPM_AUTH_TOKEN=npm_secret_value ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc
+check "RUNNER_DEBUG=1, OIDC: publish.sh doesn't print the token" no_token_in_log npm_secret_value
+
 run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc PUBLISH_NPM_TAG='beta tag'
 check "npm-tag is passed as one argument" \
   published_with 'yarn npm publish --tag beta\ tag --staged --provenance [token=]'
@@ -197,6 +205,9 @@ check "Yarn 3 fails" failed_with "Yarn 4.16.0 or higher is required"
 run_main SHIM_YARN_VERSION=4.16.0
 check "Yarn 4.16.0 is accepted; packing sets dry-run=true" \
   bash -c "(($STATUS == 0)) && grep -q 'yarn pack' '$WORK/shim.log' && grep -qx 'dry-run=true' '$WORK/output'"
+
+run_main RUNNER_DEBUG=1 DRY_RUN= YARN_NPM_AUTH_TOKEN=npm_secret_value
+check "RUNNER_DEBUG=1: main.sh doesn't print the token" no_token_in_log npm_secret_value
 
 echo "@test/npm-publish-modes@1.2.3" >"$WORK/published"
 run_main

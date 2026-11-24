@@ -13,9 +13,8 @@
 
 set -euo pipefail
 
-if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
-  set -x
-fi
+# No xtrace with RUNNER_DEBUG: the environment holds the npm token, which
+# GitHub masks in the log only if it came from a secret.
 
 script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
