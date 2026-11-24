@@ -51,11 +51,17 @@ jobs:
 
 ## Differences from upstream
 
-- `base-ref` defaults to the merge group's base branch instead of `main`.
+- The inputs are `required: false`. Upstream marked them required while also giving them defaults.
+- The decision logic lives in `scripts/check-skip-merge-queue.cjs`, loaded with `require`, so it can be
+  unit-tested.
+- The comparison step is skipped when the lookup fails. `up-to-date` is still `false`.
 - The pull request's head is compared by commit SHA, not branch name. A fork's branch doesn't exist in the base
   repository, and a branch can move between the lookup and the comparison.
+- `base-ref` defaults to the merge group's base branch instead of `main`.
 - The pull request number is taken from the last `/pr-<number>-<sha>` segment of the head ref, so a base branch
   whose name contains `/pr-<n>-` can't be mistaken for it.
+- A failed GraphQL lookup fails the step with a clear message, and the `pr-number` output is set once the pull
+  request is found.
 
 ## Tests
 
