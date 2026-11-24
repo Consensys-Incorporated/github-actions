@@ -34,10 +34,11 @@ if ! is_semver "$release_version"; then
 fi
 
 repository_url="$(jq -r '.repository | objects | .url // empty' package.json)"
-if [[ "$repository_url" != https://* ]]; then
-  echo "::error::The root package.json repository.url '$repository_url' must be an https: URL."
+if [[ "$repository_url" != https://* && "$repository_url" != git+https://* ]]; then
+  echo "::error::The root package.json repository.url '$repository_url' must be an https: or git+https: URL."
   exit 1
 fi
+repository_url="${repository_url#git+}"
 repository_url="${repository_url%.git}"
 echo "Repository: $repository_url"
 

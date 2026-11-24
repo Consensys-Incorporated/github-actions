@@ -44,7 +44,7 @@ variable.
 ## Behavior
 
 1. Read the root `package.json`: `version` (must be valid SemVer) and `repository.url` (must be
-   `https:`).
+   `https:` or `git+https:`).
 2. **Single package** (no `workspaces`): the notes are the body of the `## [<version>]` section
    of `CHANGELOG.md`, which must exist and be non-empty.
 3. **Monorepo** (`workspaces` present): `release.config.json` must contain
@@ -90,6 +90,8 @@ heading or the first link reference definition, with blank lines trimmed at both
 - An existing release `v<version>` at `github.sha` is kept instead of failing `gh release
   create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
   can finish a release whose tag push failed.
+- `repository.url` may also be a `git+https:` URL, the form npm normalizes it to.
+  Upstream required `https:`.
 - Only the new tags are pushed, by name, instead of `git push --tags`, to `GITHUB_SERVER_URL`
   instead of a hard-coded `github.com`.
 

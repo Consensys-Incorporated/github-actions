@@ -462,7 +462,16 @@ test_config_errors() {
   dir="$WORK/bad-url"
   (monorepo_fixture "$dir" && jq '.repository.url = "git@github.com:octo/repo.git"' package.json >p && mv p package.json)
   run_prepare "$dir" "$dir.existing-tags"
-  expect_prepare_failure "non-https repository URL fails" "must be an https: URL"
+  expect_prepare_failure "non-https repository URL fails" "must be an https: or git+https: URL"
+
+  dir="$WORK/git-https-url"
+  (monorepo_fixture "$dir" && jq '.repository.url = "git+https://github.com/octo/repo.git"' package.json >p && mv p package.json)
+  run_prepare "$dir" "$dir.existing-tags"
+  if ((PREPARE_STATUS == 0)) && grep -qxF "Repository: https://github.com/octo/repo" <<<"$PREPARE_LOG"; then
+    pass "git+https repository URL is accepted"
+  else
+    fail "git+https repository URL is accepted" "status $PREPARE_STATUS" "$PREPARE_LOG"
+  fi
 
   dir="$WORK/bad-name"
   (monorepo_fixture "$dir" && pkg packages/a '@octo/a?x' 1.1.0)
