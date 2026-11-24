@@ -76,10 +76,14 @@ export function getDevDependencyLines(diffOutput: string, nonVersionLines: strin
  *
  * @param oldVersion - The version before the change.
  * @param newVersion - The version after the change.
- * @returns True if `newVersion` is lower.
+ * @returns True if `newVersion` is lower; false if it isn't, or if either
+ * version is not valid semver (it can't be shown to be a revert).
  */
 export function isVersionDowngrade(oldVersion: string, newVersion: string): boolean {
-  return new semver.SemVer(newVersion).compare(new semver.SemVer(oldVersion)) < 0;
+  if (!semver.valid(oldVersion) || !semver.valid(newVersion)) {
+    return false;
+  }
+  return semver.lt(newVersion, oldVersion);
 }
 
 /**

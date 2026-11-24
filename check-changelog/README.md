@@ -85,6 +85,11 @@ added) starting with `}` after it, and only the first `"devDependencies":` is co
 - Only the package's own `package.json` gets the `package.json` analysis. Upstream applied it to
   any file whose name ends in `package.json`, such as `schema-package.json` or a test fixture's
   `package.json`, so a version-only change to one of those was skipped.
+- A `version` that is not valid semver no longer makes the check skip the `package.json`.
+  Upstream's downgrade comparison threw, and the error was caught as "no changes". The change is
+  now classified like any other: it is not a downgrade, and if other fields changed too, the
+  changelog section for that version is required (and, as auto-changelog rejects non-semver
+  release headers, the check fails).
 
 ## Security
 

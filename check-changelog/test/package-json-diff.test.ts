@@ -160,6 +160,26 @@ describe('analyzePackageJsonDiff', () => {
     assert.equal(result.isDevDependencyOnly, false);
   });
 
+  it('classifies a change to a version that is not valid semver', () => {
+    const result = analyzePackageJsonDiff(
+      diff(
+        ...HEAD,
+        '-  "version": "1.0.0",',
+        '+  "version": "1.1",',
+        '   "dependencies": {',
+        '-    "some-dep": "^1.0.0"',
+        '+    "some-dep": "^2.0.0"',
+        '   },',
+        ...DEV_DEPS,
+        ' }',
+      ),
+    );
+    assert.equal(result.hasChanges, true);
+    assert.equal(result.isVersionOnly, false);
+    assert.equal(result.isVersionDowngrade, false);
+    assert.equal(result.newVersion, '1.1');
+  });
+
   it('treats a dependencies change as user-facing', () => {
     const result = analyzePackageJsonDiff(
       diff(
@@ -224,5 +244,10 @@ describe('isVersionDowngrade', () => {
     assert.equal(isVersionDowngrade('1.10.0', '1.9.0'), true);
     assert.equal(isVersionDowngrade('1.9.0', '1.10.0'), false);
     assert.equal(isVersionDowngrade('1.0.0', '1.0.0-rc.1'), true);
+  });
+
+  it('is false if either version is not valid semver', () => {
+    assert.equal(isVersionDowngrade('1.1.0', '1.0'), false);
+    assert.equal(isVersionDowngrade('latest', '1.0.0'), false);
   });
 });

@@ -280,6 +280,15 @@ case_version_and_deps_version_section_without_entry() {
     '"1.1.0" section'
 }
 
+case_invalid_version_and_deps() {
+  monorepo "$WORK/invalid-version-and-deps"
+  package_json pub 1.1 false ^2.0.0 >packages/pub/package.json
+  changelog "$entry" >packages/pub/CHANGELOG.md
+  commit
+  expect fail "version bump to invalid semver and dependencies change" \
+    "Could not find section for version '1.1'"
+}
+
 case_two_packages_one_missing() {
   monorepo "$WORK/two-packages-one-missing"
   echo "export const y = 2;" >>packages/pub/src/index.ts
