@@ -6,9 +6,21 @@ For Yarn 4 projects.
 
 Ported from
 [`MetaMask/action-checkout-and-setup`](https://github.com/MetaMask/action-checkout-and-setup) v3
-(MIT). Differences: `persist-credentials` defaults to `false`; high-risk jobs cannot use
-`cache-node-modules` (upstream's write-only cache mode is removed); `fetch-depth`, `filter`,
-`yarn-install-max-retries` and `yarn-tarball` are removed.
+(MIT), and replaces
+[`MetaMask/action-retry-command`](https://github.com/MetaMask/action-retry-command). Differences:
+
+- `persist-credentials` defaults to `false`.
+- High-risk jobs cannot use `cache-node-modules` (upstream's write-only cache mode is removed).
+- `fetch-depth`, `filter`, `yarn-install-max-retries` and `yarn-tarball` are removed.
+- Every boolean input must be exactly `true` or `false`.
+- Outputs are `node-modules-cache-hit`, `skipped-setup` (both always `true` or `false`) and
+  `node-version`.
+- Retries use `scripts/retry.sh`: 5 attempts, the command run directly rather than through
+  `$SHELL -c`, and no sleep after the last attempt.
+- `actions/setup-node` v7, with `package-manager-cache: false` on the first setup.
+- If the selected Node.js doesn't ship Corepack (25 and later), `corepack@0.36.0` is installed for
+  it.
+- `allow-scripts` is detected by `node_modules/.bin/allow-scripts` rather than `yarn bin`.
 
 ## Usage
 
