@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Analysis of a `git diff -U9999` of a workspace package.json, ported from
-// MetaMask/github-tools src/changelog-check.mts. Known quirks are kept: the
-// devDependencies block is the first `"devDependencies":` line up to the next
-// line matching /^\s*\}/, and a changed line is located by its first exact
-// occurrence in the diff.
+// MetaMask/github-tools src/changelog-check.mts. The devDependencies block is
+// the first `"devDependencies":` line up to the next unchanged, removed or
+// added line starting with `}`. As upstream, a changed line is located by its
+// first exact occurrence in the diff.
 
 import semver from 'semver';
 
@@ -40,11 +40,14 @@ export function getDevDependencyLines(diffOutput: string, nonVersionLines: strin
   let devDependencySectionStart: number | undefined;
   let devDependencySectionEnd: number | undefined;
 
+  // The end pattern allows for the diff marker: upstream matched /^\s*\}/
+  // against the whole line, which misses a removed or added closing brace and
+  // runs the block on to the next unchanged one.
   for (let i = 0; i < allLines.length; i++) {
     const line = allLines[i] as string;
     if (line.includes('"devDependencies":')) {
       devDependencySectionStart = i;
-    } else if (devDependencySectionStart && /^\s*\}/u.test(line)) {
+    } else if (devDependencySectionStart && /^[ +-]\s*\}/u.test(line)) {
       devDependencySectionEnd = i;
       break;
     }

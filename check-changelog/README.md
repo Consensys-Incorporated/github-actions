@@ -58,8 +58,8 @@ that section must exist. Every changed package is checked and every failure repo
 **Single package** (no `workspaces`): the root `CHANGELOG.md`'s `Unreleased` section must link
 the pull request.
 
-Two upstream quirks are kept: the `devDependencies` block is taken to end at the first line
-starting with `}` after it, and only the first `"devDependencies":` is considered.
+The `devDependencies` block is taken to end at the first line of the diff (unchanged, removed or
+added) starting with `}` after it, and only the first `"devDependencies":` is considered.
 
 ## Differences from upstream
 
@@ -76,6 +76,9 @@ starting with `}` after it, and only the first `"devDependencies":` is considere
 - Packages are identified by directory (`packages/foo`) rather than by directory name (`foo`), so
   two workspace roots with a package directory of the same name are checked separately, and a
   private package does not exempt a public one of the same name. Log messages name the directory.
+- The end of the `devDependencies` block is found on removed and added lines too. Upstream only
+  matched unchanged lines, so a diff that changed the block's closing brace (for example, by
+  adding a field after it) counted every later change as a `devDependencies` change.
 
 ## Security
 

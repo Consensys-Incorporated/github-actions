@@ -143,6 +143,23 @@ describe('analyzePackageJsonDiff', () => {
     assert.equal(result.newVersion, '1.1.0');
   });
 
+  it('does not run the devDependencies block past a changed closing brace', () => {
+    const result = analyzePackageJsonDiff(
+      diff(
+        ...HEAD,
+        '   "version": "1.0.0",',
+        ...DEPS,
+        '   "devDependencies": {',
+        '     "some-dev-dep": "^1.0.0"',
+        '-  }',
+        '+  },',
+        '+  "files": ["dist"]',
+        ' }',
+      ),
+    );
+    assert.equal(result.isDevDependencyOnly, false);
+  });
+
   it('treats a dependencies change as user-facing', () => {
     const result = analyzePackageJsonDiff(
       diff(
@@ -166,7 +183,7 @@ describe('getDevDependencyLines', () => {
     assert.deepEqual(getDevDependencyLines(diff(...HEAD, '+  "x": 1', ' }'), ['+  "x": 1']), []);
   });
 
-  it('ends the block at the first closing brace (upstream quirk)', () => {
+  it('ends the block at the first closing brace', () => {
     const output = diff(
       ...HEAD,
       '   "devDependencies": {',
@@ -177,6 +194,28 @@ describe('getDevDependencyLines', () => {
       ' }',
     );
     assert.deepEqual(getDevDependencyLines(output, ['-  "files": []', '+  "files": ["dist"]']), []);
+  });
+  it('ends the block at a removed or added closing brace', () => {
+    const output = diff(
+      ...HEAD,
+      '   "devDependencies": {',
+      '-    "a": "^1.0.0"',
+      '+    "a": "^2.0.0"',
+      '-  }',
+      '+  },',
+      '+  "files": ["dist"]',
+      ' }',
+    );
+    assert.deepEqual(
+      getDevDependencyLines(output, [
+        '-    "a": "^1.0.0"',
+        '+    "a": "^2.0.0"',
+        '-  }',
+        '+  },',
+        '+  "files": ["dist"]',
+      ]),
+      ['-    "a": "^1.0.0"', '+    "a": "^2.0.0"', '-  }'],
+    );
   });
 });
 
