@@ -4,7 +4,8 @@
 # Tests that scripts/environment.sh unsets the job's YARN_* variables, which
 # would otherwise override the configuration file the action writes (e.g.
 # redirect publishing to another registry), and keeps only the ones the action
-# sets itself.
+# sets itself; and that it stops Corepack from reading COREPACK_* variables
+# from the repository's `.corepack.env`.
 #
 # Usage: test/environment-variables.sh
 
@@ -78,6 +79,39 @@ actual="$(env -i PATH="$PATH" MY_YARN_SETTING=1 bash -euo pipefail -c '
   printf "%s" "${MY_YARN_SETTING:-}"
 ' _ "$ENVIRONMENT_SCRIPT" || echo "environment.sh failed with exit code $?")"
 check "other variables are kept" "1" "$actual"
+
+# With real Corepack: a `.corepack.env` in the project can allow a URL as the
+# `packageManager`, so that `yarn` would download and run any script.
+# environment.sh stops Corepack from reading that file.
+PROJECT="$(mktemp -d "${TMPDIR:-/tmp}/npm-publish-corepack.XXXXXX")"
+echo '{"packageManager": "yarn@https://example.invalid/yarn.js"}' >"$PROJECT/package.json"
+echo 'COREPACK_ENABLE_UNSAFE_CUSTOM_URLS=1' >"$PROJECT/.corepack.env"
+# corepack_yarn [environment.sh]: runs `corepack yarn --version` in $PROJECT,
+# after sourcing the given script if any, and prints its output.
+corepack_yarn() {
+  # shellcheck disable=SC2016 # Expanded by the inner shell.
+  (cd "$PROJECT" && env -i PATH="$PATH" HOME="$PROJECT" COREPACK_HOME="$PROJECT/corepack" bash -c '
+    if [[ -n "$1" ]]; then source "$1"; fi
+    corepack yarn --version 2>&1
+  ' _ "$@" || true)
+}
+# corepack_outcome <output>: "tried" if Corepack requested the URL, "refused"
+# if it rejected it, or the output otherwise.
+corepack_outcome() {
+  if [[ "$1" == *"request to https://example.invalid/yarn.js"* ]]; then
+    echo tried
+  elif [[ "$1" == *"Illegal use of URL for known package manager"* ]]; then
+    echo refused
+  else
+    echo "$1"
+  fi
+}
+# Control: without environment.sh, Corepack reads the file and tries the URL.
+check "control: Corepack reads .corepack.env without environment.sh" \
+  "tried" "$(corepack_outcome "$(corepack_yarn)")"
+check "Corepack ignores .corepack.env after environment.sh" \
+  "refused" "$(corepack_outcome "$(corepack_yarn "$ENVIRONMENT_SCRIPT")")"
+rm -r "$PROJECT"
 
 if ((failures > 0)); then
   echo "$failures failure(s)"
