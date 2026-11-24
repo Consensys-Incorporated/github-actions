@@ -1,0 +1,74 @@
+name: Test check-skip-merge-queue
+
+on:
+  push:
+    paths:
+      - 'check-skip-merge-queue/**'
+      - '.github/workflows/test_check-skip-merge-queue.yml'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      head-ref:
+        description: 'A merge-group head ref for a closed or merged pull request, e.g. refs/heads/gh-readonly-queue/main/pr-1-<sha>'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: node --test 'check-skip-merge-queue/test/*.test.cjs'
+
+  # The positive path depends on live merge-queue state; it is covered by the
+  # unit tests and by observing a merge-queue run of a consumer.
+  not-up-to-date:
+    name: up-to-date is false (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: non-matching head ref
+            head-ref: refs/heads/main
+            pr-number: ''
+          # Pull request #1 of this repository is merged, so it is not queued.
+          - name: merged pull request
+            head-ref: refs/heads/gh-readonly-queue/main/pr-1-0000000000000000000000000000000000000000
+            # Set once the lookup succeeds, so this case fails if the lookup
+            # itself breaks.
+            pr-number: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Run action
+        id: action
+        uses: ./check-skip-merge-queue
+        with:
+          head-ref: ${{ inputs.head-ref || matrix.head-ref }}
+      - name: Assert up-to-date is false
+        env:
+          UP_TO_DATE: ${{ steps.action.outputs.up-to-date }}
+          PR_NUMBER: ${{ steps.action.outputs.pr-number }}
+          EXPECTED_PR_NUMBER: ${{ inputs.head-ref && steps.action.outputs.pr-number || matrix.pr-number }}
+        run: |
+          if [[ "$UP_TO_DATE" != "false" ]]; then
+            echo "::error::Expected up-to-date=false, got '$UP_TO_DATE'"
+            exit 1
+          fi
+          if [[ "$PR_NUMBER" != "$EXPECTED_PR_NUMBER" ]]; then
+            echo "::error::Expected pr-number '$EXPECTED_PR_NUMBER', got '$PR_NUMBER'"
+            exit 1
+          fi
