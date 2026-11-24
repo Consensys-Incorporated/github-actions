@@ -51,7 +51,7 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
         BASE_REF: ${{ inputs.base-ref }}
-        PR_BRANCH: ${{ steps.pr-details.outputs.pr-branch }}
+        PR_HEAD_SHA: ${{ steps.pr-details.outputs.pr-head-sha }}
         MERGE_QUEUE_POSITION: ${{ steps.pr-details.outputs.merge-queue-position }}
         SCRIPT_PATH: ${{ github.action_path }}/scripts/check-skip-merge-queue.cjs
       with:
@@ -63,6 +63,6 @@ runs:
             context,
             core,
             baseRef: process.env.BASE_REF,
-            prBranch: process.env.PR_BRANCH,
+            prHeadSha: process.env.PR_HEAD_SHA,
             mergeQueuePosition: process.env.MERGE_QUEUE_POSITION,
           });

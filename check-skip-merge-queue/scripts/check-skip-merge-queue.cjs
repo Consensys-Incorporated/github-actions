@@ -8,7 +8,7 @@
 
 /**
  * Finds the pull request a merge-group head ref belongs to and its position in
- * the merge queue. Sets the `pr-number`, `pr-branch` and
+ * the merge queue. Sets the `pr-number`, `pr-head-sha` and
  * `merge-queue-position` outputs, or fails the step.
  *
  * @param {object} args
@@ -31,7 +31,7 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
       query($owner: String!, $name: String!, $number: Int!) {
         repository(owner: $owner, name: $name) {
           pullRequest(number: $number) {
-            headRefName
+            headRefOid
             mergeQueueEntry { position }
           }
         }
@@ -53,23 +53,26 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
   }
 
   core.setOutput('pr-number', number);
-  core.setOutput('pr-branch', pullRequest.headRefName);
+  core.setOutput('pr-head-sha', pullRequest.headRefOid);
   core.setOutput('merge-queue-position', position);
 }
 
 /**
  * Sets the `up-to-date` output: `true` if the pull request is first in the
- * merge queue and its branch contains the base branch.
+ * merge queue and its head commit contains the base branch.
+ *
+ * The head is compared by SHA, not branch name: a fork's branch doesn't exist
+ * in this repository, and a branch can move after the lookup.
  *
  * @param {object} args
  * @param {object} args.github - Octokit client.
  * @param {object} args.context - github-script context.
  * @param {object} args.core - @actions/core.
  * @param {string} args.baseRef - Base branch.
- * @param {string} args.prBranch - Pull request branch.
+ * @param {string} args.prHeadSha - Pull request head commit.
  * @param {string} args.mergeQueuePosition - Position, as a string.
  */
-async function checkUpToDate({ github, context, core, baseRef, prBranch, mergeQueuePosition }) {
+async function checkUpToDate({ github, context, core, baseRef, prHeadSha, mergeQueuePosition }) {
   if (parseInt(mergeQueuePosition, 10) !== 1) {
     core.info(`Pull request is not first in the merge queue (position: ${mergeQueuePosition}).`);
     core.setOutput('up-to-date', 'false');
@@ -79,14 +82,14 @@ async function checkUpToDate({ github, context, core, baseRef, prBranch, mergeQu
   const comparison = await github.rest.repos.compareCommitsWithBasehead({
     owner: context.repo.owner,
     repo: context.repo.repo,
-    basehead: `${baseRef}...${prBranch}`,
+    basehead: `${baseRef}...${prHeadSha}`,
   });
 
   if (comparison.data.status === 'identical' || comparison.data.status === 'ahead') {
-    core.info(`Pull request branch "${prBranch}" is up-to-date with base branch "${baseRef}".`);
+    core.info(`Pull request head ${prHeadSha} is up-to-date with base branch "${baseRef}".`);
     core.setOutput('up-to-date', 'true');
   } else {
-    core.info(`Pull request branch "${prBranch}" is not up-to-date with base branch "${baseRef}".`);
+    core.info(`Pull request head ${prHeadSha} is not up-to-date with base branch "${baseRef}".`);
     core.setOutput('up-to-date', 'false');
   }
 }
