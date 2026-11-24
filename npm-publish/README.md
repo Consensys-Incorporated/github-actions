@@ -74,7 +74,8 @@ packs and passes instead of failing.
    `postpack` scripts from every workspace, private ones included.
 2. **Publish** (`scripts/main.sh`, `publish.sh`): require Yarn ≥ 4.16. Find the public workspaces
    whose `name@version` is not on npm (skipping `0.0.0`; in a single-package repository, the root
-   unless it's private), then for each one:
+   unless it's private), then for each one, in the order `yarn workspaces list` prints them, run
+   `scripts/publish.sh` in its directory, stopping at the first failure:
    - `dry-run: true` → pack;
    - not on npm: with a token, `yarn npm publish --tag <tag>`; without, pack (or fail if
      `dry-run: false`);
@@ -103,13 +104,17 @@ packs and passes instead of failing.
   npm yet, so re-running a release doesn't fail on an existing version.
 - Lifecycle scripts are removed from private workspaces too.
 - `dry-run` is `true` if any package was packed, whatever order the packages were handled in.
+- `publish.sh` runs directly in each workspace, not through `yarn workspaces foreach exec`, which
+  puts the bins of the workspace and its dependencies first on `PATH`: a package declaring a
+  `bash`, `jq`, `npm` or `yarn` bin would run in place of the real tool, with the token in its
+  environment.
 - The generated Yarn configuration is passed to the action's own steps only. Upstream writes
   `YARN_RC_FILENAME` to `$GITHUB_ENV`, so every later Yarn command in the caller's job uses it too.
 
 ## Security
 
 - No repository-controlled code runs from the sanitize step onward: no repository
-  `.yarnrc.yml`, Yarn plugins, `yarnPath`, lifecycle scripts or `YARN_*` overrides.
+  `.yarnrc.yml`, Yarn plugins, `yarnPath`, lifecycle scripts, `YARN_*` overrides or package bins.
 - Packages are published only to `https://registry.npmjs.org`.
 - The token is used only for a package's first publish; existing packages publish only with OIDC,
   staged and with provenance.
@@ -117,11 +122,12 @@ packs and passes instead of failing.
 
 ## Tests
 
-`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims.
+`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims, and that a monorepo's
+workspaces are handled in Yarn's order and stop at the first failure.
 `test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
 except the action's own. `.github/workflows/test_npm-publish.yml` runs both, and runs the action
 with real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures
-without credentials, a foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath`
-and lifecycle scripts would write marker files, that `YARN_*` overrides such as
-`YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads, and that
-`YARN_RC_FILENAME` isn't set in the caller's later steps.
+without credentials, a foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath`,
+lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, that `YARN_*`
+overrides such as `YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step
+reads, and that `YARN_RC_FILENAME` isn't set in the caller's later steps.

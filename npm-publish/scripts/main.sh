@@ -59,39 +59,49 @@ fi
 publish_monorepo() {
   echo "Workspaces detected. Treating as a monorepo."
 
-  # Determine up front which workspaces need publishing, so that
-  # `yarn workspaces foreach` only runs for those. Workspaces are checked in
-  # parallel.
-  local pending
-  pending="$(
+  # One line per public workspace, in the order Yarn lists them: location,
+  # name and version, tab-separated.
+  local workspaces
+  workspaces="$(
     yarn workspaces list --json --no-private |
       jq --raw-output '.location' |
       while IFS= read -r location; do
         jq --raw-output --arg location "$location" '
           [
+            $location,
             (.name // error("Missing .name in " + $location + "/package.json")),
             (.version // error("Missing .version in " + $location + "/package.json"))
           ] | @tsv
         ' "$location/package.json" || exit 1
-      done |
-      xargs -P 10 -n 2 "$script_path/needs-publish.sh"
+      done
   )"
+
+  # Determine up front which workspaces need publishing. Workspaces are
+  # checked in parallel.
+  local pending
+  pending="$(cut -f 2,3 <<<"$workspaces" | xargs -P 10 -n 2 "$script_path/needs-publish.sh")"
 
   if [[ -z "$pending" ]]; then
     echo "No packages need publishing."
     return 0
   fi
 
-  local -a names include_args=()
+  local -a names
   mapfile -t names <<<"$pending"
-  for name in "${names[@]}"; do
-    include_args+=(--include "$name")
-  done
-
   echo "Publishing ${#names[@]} package(s): ${pending//$'\n'/, }."
 
-  yarn workspaces foreach --all "${include_args[@]}" --no-private --verbose \
-    exec "$script_path/publish.sh"
+  # publish.sh runs in each workspace in the order Yarn lists them, and the
+  # first failure stops the rest. Not through `yarn workspaces foreach exec`:
+  # that puts the bins of the workspace and its dependencies first on PATH, so
+  # a package declaring a `bash`, `jq`, `npm` or `yarn` bin would run in place
+  # of the real one, with the token and OIDC in its environment.
+  local location name _version
+  while IFS=$'\t' read -r -u 3 location name _version; do
+    if [[ -n "$name" ]] && grep -qxF -- "$name" <<<"$pending"; then
+      echo "Publishing $name from $location."
+      (cd -- "$location" && "$script_path/publish.sh")
+    fi
+  done 3<<<"$workspaces"
 }
 
 publish_polyrepo() {

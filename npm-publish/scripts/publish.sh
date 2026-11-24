@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Publishes or packs the package in the current directory. Run by main.sh,
-# directly (polyrepo) or through `yarn workspaces foreach exec` (monorepo).
+# in the package's directory.
 #
 # Mode selection:
 #   1. DRY_RUN=true: pack.

@@ -40,11 +40,15 @@ exit 1
 EOF
 
 # yarn: logs its arguments and whether YARN_NPM_AUTH_TOKEN is set; implements
-# --version and `pack --out`.
+# --version, `workspaces list` (prints $SHIM_WORKSPACES) and `pack --out`.
 cat >"$SHIMS/yarn" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "--version" ]]; then
   echo "${SHIM_YARN_VERSION:-4.18.1}"
+  exit 0
+fi
+if [[ "$1 $2" == "workspaces list" ]]; then
+  printf '%s\n' "$SHIM_WORKSPACES"
   exit 0
 fi
 printf 'yarn' >>"$SHIM_LOG"
@@ -165,7 +169,7 @@ run_main() {
   : >"$WORK/shim.log"
   : >"$WORK/output"
   set +e
-  LOG="$(cd "$PKG" && env -u ACTIONS_ID_TOKEN_REQUEST_URL -u GITHUB_SHA \
+  LOG="$(cd "${MAIN_DIR:-$PKG}" && env -u ACTIONS_ID_TOKEN_REQUEST_URL -u GITHUB_SHA \
     PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" PACK_DIR="$PACK_DIR" \
     GITHUB_OUTPUT="$WORK/output" GITHUB_STEP_SUMMARY="$WORK/summary" \
     PUBLISH_NPM_TAG=next DRY_RUN=true YARN_RC_FILENAME=.yarnrc-test.yml "$@" "$SCRIPTS/main.sh" 2>&1)"
@@ -206,7 +210,40 @@ run_main
 check "polyrepo with an npm lookup error: fails" failed_with "failed with exit code 1"
 : >"$WORK/published"
 
-rm -f "$TARBALL"
+# main.sh in a monorepo, whose public workspaces Yarn lists as c, a and b. b
+# is on npm at its version.
+MONO="$WORK/mono"
+for name in a b c; do
+  mkdir -p "$MONO/packages/$name"
+  echo "{\"name\": \"@test/$name\", \"version\": \"1.0.0\"}" >"$MONO/packages/$name/package.json"
+done
+echo '{"name": "root", "private": true, "workspaces": ["packages/*"]}' >"$MONO/package.json"
+mono_workspaces='{"location":"packages/c","name":"@test/c"}
+{"location":"packages/a","name":"@test/a"}
+{"location":"packages/b","name":"@test/b"}'
+echo "@test/b@1.0.0" >"$WORK/published"
+
+packed_c_then_a() {
+  ((STATUS == 0)) && [[ "$(grep -c '^yarn pack' "$WORK/shim.log")" == 2 ]] &&
+    [[ "$(grep -o 'from packages/[a-c]' <<<"$LOG")" == $'from packages/c\nfrom packages/a' ]] &&
+    test -f "$PACK_DIR/@test-a-1.0.0.tgz" && test -f "$PACK_DIR/@test-c-1.0.0.tgz" &&
+    test ! -e "$PACK_DIR/@test-b-1.0.0.tgz" && grep -qx 'dry-run=true' "$WORK/output"
+}
+
+stopped_after_c() {
+  ((STATUS != 0)) && [[ "$(grep -o 'from packages/[a-c]' <<<"$LOG")" == 'from packages/c' ]] &&
+    [[ ! -s "$WORK/shim.log" ]]
+}
+
+rm -f "$PACK_DIR"/*.tgz
+MAIN_DIR="$MONO" run_main SHIM_WORKSPACES="$mono_workspaces"
+check "monorepo: pending workspaces are packed in the order Yarn lists them" packed_c_then_a
+
+MAIN_DIR="$MONO" run_main SHIM_WORKSPACES="$mono_workspaces" DRY_RUN=false
+check "monorepo: the first failure stops the remaining workspaces" stopped_after_c
+: >"$WORK/published"
+
+rm -f "$TARBALL" "$PACK_DIR"/*.tgz
 if ((failures > 0)); then
   echo "$failures failure(s)"
   exit 1
