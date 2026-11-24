@@ -6,7 +6,7 @@ For Yarn 4 projects.
 
 Ported from
 [`MetaMask/action-checkout-and-setup`](https://github.com/MetaMask/action-checkout-and-setup) v3
-(MIT), and replaces
+and replaces
 [`MetaMask/action-retry-command`](https://github.com/MetaMask/action-retry-command). Differences:
 
 - `persist-credentials` defaults to `false`.
@@ -109,3 +109,8 @@ whether `allow-scripts` ran.
 Some tests need the fixture at the root of a ref of this repository. After changing
 `test-fixture/`, commit, then run `test/publish-fixture.sh` to update the
 `test-fixtures/node-checkout-and-setup` branch.
+
+There is one fixture branch for the whole repository. When a pull request changes the fixture and
+republishes it, the fixture-branch-up-to-date job fails on every other open pull request until the
+change merges and they are rebased onto it. Merge fixture changes before other pull requests that
+touch this action.
