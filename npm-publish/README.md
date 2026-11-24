@@ -1,126 +1,130 @@
-# action-npm-publish
+# npm-publish
 
-This is a GitHub action that handles publishing to NPM for a project that represents a single package (in the case of a polyrepo) or a collection of packages (in the case of a monorepo).
+Publishes every public workspace package whose current version is not on npm yet, from a job that
+has already checked out the release commit and restored its build output. Packages already on npm
+are published with OIDC (npm trusted publishing), staged, with provenance for public
+repositories; a package's first publish uses `npm-token`. Without a usable credential, the
+packages are packed instead (a dry run), with a diff report against the latest published version.
+The repository cannot run code while publishing.
 
-- For a polyrepo project, the action will publish the package using its current version as per `package.json`.
-
-- For a monorepo, the action will publish each workspace package (the set of packages matched via the `workspaces` field in `package.json`, recursively) using its current version as per `package.json`. (Any package which has already been published at its current version will be skipped.)
-
-
-## Requirements
-
-**This action requires Yarn 4.16.0 or higher.**
-
-This action assumes that your project uses the `node-modules` linker (`nodeLinker: node-modules`). For monorepos, you will need to ensure that the file `node_modules/.yarn-state.yml` is present before this action is invoked. This file is generated automatically when installing dependencies. If you want to publish without dependencies present, you can instantiate an empty state file or restore one from a cache.
-
-This action depends upon the action `slackapi/slack-github-action@007b2c3c751a190b6f0f040e47ed024deaa72844`. This action is authored by a Marketplace "verified creator". If your repository or organization restricts which actions can be used and does not allow Marketplace verified creators by default, ensure that this action is listed as an allowed action.
-
-## Security
-
-Yarn runs code from the repository being published: plugins, `yarnPath` releases, and lifecycle scripts. To prevent that code from reading publishing credentials, the action first sanitises the checkout:
-
-- Yarn is pointed to a minimal configuration file stored outside of the checkout, so `.yarnrc.yml` in the repository (including its plugins) is not loaded. The configuration sets `nodeLinker: node-modules` and disables scripts (`enableScripts: false`), telemetry, and environment file injection. Packages are always published to `https://registry.npmjs.org`, and custom registries are not supported.
-- `~/.yarnrc.yml` is removed.
-- `YARN_*` environment variables override the configuration file, so they are unset before Yarn runs. If you set a Yarn setting through an environment variable (e.g., `YARN_NPM_PUBLISH_REGISTRY`) in the job that runs this action, it has no effect on the publish.
-- The `prepublish`, `prepublishOnly`, `prepack`, and `postpack` scripts are removed from the `package.json` of every package that may be published. These scripts do not run, so any build step must happen before this action is invoked.
-- Publishing fails if a package sets `publishConfig.registry` to anything other than `https://registry.npmjs.org`.
+Ported from [`MetaMask/action-npm-publish`](https://github.com/MetaMask/action-npm-publish) v7
+(MIT). Requires Yarn 4.16 or later.
 
 ## Usage
 
-### Quick start
-
-If you're in a hurry, take a look at the [`publish-release` workflow](https://github.com/MetaMask/metamask-module-template/blob/main/.github/workflows/publish-release.yml) from the [module template](https://github.com/MetaMask/metamask-module-template), which uses this action to publish appropriate packages whenever a release commit is merged, once in dry-run mode and once in "real" mode. (A release commit is a commit that changes the version of the primary package within the project, whether that is the sole package in the case of a polyrepo package, or the root package in the case of a monorepo.)
-
-### Publish with OIDC
-
-After the initial publish, OIDC is the only supported authentication method. Grant the job `id-token: write` permission and no `npm-token` is needed:
-
 ```yaml
 jobs:
-  publish:
+  publish-npm-dry-run:
+    runs-on: ubuntu-latest
     permissions:
+      contents: read
+    steps:
+      - uses: Consensys-Incorporated/github-actions/node-checkout-and-setup@<sha> # <tag>
+        with:
+          is-high-risk-environment: true
+          ref: ${{ github.sha }}
+      # Restore build output here.
+      - uses: Consensys-Incorporated/github-actions/npm-publish@<sha> # <tag>
+        with:
+          dry-run: true
+
+  publish-npm:
+    needs: publish-npm-dry-run
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
       id-token: write
     steps:
-      - uses: MetaMask/action-npm-publish@v6
+      - uses: Consensys-Incorporated/github-actions/node-checkout-and-setup@<sha> # <tag>
+        with:
+          is-high-risk-environment: true
+          ref: ${{ github.sha }}
+      # Restore build output here.
+      - uses: Consensys-Incorporated/github-actions/npm-publish@<sha> # <tag>
+        with:
+          dry-run: false
+          npm-token: ${{ secrets.NPM_TOKEN }}
 ```
 
-This uses `--provenance` and (by default) `--staged` for publishing.
+## Inputs
 
-### Initial publish with token
+| Input               | Default       | Description                                                                                                       |
+| ------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `npm-token`         |               | Used only for a package's first publish.                                                                          |
+| `dry-run`           |               | `true`: pack instead of publishing. `false`: fail when a credential is missing. Unset: pack when one is missing. |
+| `npm-tag`           | `latest`      | The dist-tag. Must not be empty.                                                                                  |
+| `slack-webhook-url` |               | If set, post that the release is awaiting deployment.                                                             |
+| `channel`           |               | Slack channel, without `#`. Defaults to the webhook's channel.                                                    |
+| `subteam`           |               | Slack user group ID to mention.                                                                                   |
+| `username`          | `npm-publish` | Bot name in Slack.                                                                                                |
+| `icon-url`          |               | Bot avatar URL in Slack.                                                                                          |
 
-NPM requires a package to exist on the registry before OIDC can be configured for it, so the very first publish must use a token:
+Set `dry-run` explicitly on both jobs: with it unset, a publish job whose OIDC grant is missing
+packs and passes instead of failing.
 
-```yaml
-- uses: MetaMask/action-npm-publish@v6
-  with:
-    npm-token: ${{ secrets.NPM_TOKEN }}
-```
+## Outputs
 
-Once the package has been published at least once, the token is ignored and OIDC is used exclusively for all subsequent publishes.
+| Output    | Description                                               |
+| --------- | --------------------------------------------------------- |
+| `dry-run` | `true` if any package was packed instead of published. |
 
-### Dry run mode
+## Behavior
 
-In dry run mode, packages will be prepared for publishing but no publishing will actually occur. No token or OIDC is necessary.
+1. **Sanitize** (`scripts/sanitize.sh`), before any Yarn command: unset `YARN_*` variables (except
+   the action's own), point Yarn at a minimal generated configuration outside the checkout
+   (`enableScripts: false`, the npm registry only, no plugins), ignore `yarnPath`, delete
+   `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
+   `https://registry.npmjs.org`, and delete `prepublish`, `prepublishOnly`, `prepack` and
+   `postpack` scripts from every workspace, private ones included.
+2. **Publish** (`scripts/main.sh`, `publish.sh`): require Yarn ≥ 4.16. Find the public workspaces
+   whose `name@version` is not on npm (skipping `0.0.0`; in a single-package repository, the root
+   unless it's private), then for each one:
+   - `dry-run: true` → pack;
+   - not on npm: with a token, `yarn npm publish --tag <tag>`; without, pack (or fail if
+     `dry-run: false`);
+   - on npm: with OIDC, `yarn npm publish --tag <tag> --staged` (plus `--provenance` for a public
+     repository); without, pack (or fail if `dry-run: false`). The token is never used here.
+   An npm lookup error other than "not found" fails the action.
+3. **Dry run**: tarballs are written to `$RUNNER_TEMP/npm-publish-packages`. Log each tarball's
+   SHA-1 and integrity to the step summary, write a `pkdiff` report against `<name>@latest`, and
+   upload the tarballs and reports as the
+   `npm-publish-dry-run-<sha>` artifact.
+4. **Slack** (if `slack-webhook-url` is set): post `` `<name>@<version>` is awaiting deployment``
+   with a link to the workflow run. A Slack failure does not fail the action.
 
-```yaml
-- uses: MetaMask/action-npm-publish@v6
-  with:
-    dry-run: true
-```
+## Differences from upstream
 
-If neither a token nor OIDC is available, `dry-run` will default to `true`, otherwise it defaults to `false`.
+- `staged-publish` and `provenance` are removed: OIDC publishes are always staged, with
+  provenance for public repositories.
+- No MetaMask defaults: `username` defaults to `npm-publish`, `icon-url` has no default, and the
+  Slack message has no link to MetaMask's instructions.
+- The Slack payload is built with `jq` from arguments, not by interpolating values into JSON.
+- Publish commands are bash arrays, not strings split on spaces.
+- The artifact has an explicit name, overwritten by a second dry run in the same workflow run.
+- `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies.
+- Tarballs go to `$RUNNER_TEMP/npm-publish-packages` rather than `/tmp`, so tarballs left by
+  other jobs on a reused runner aren't reported or uploaded.
+- An npm lookup error other than "not found" fails the action, so a registry outage can't send an
+  existing package down the token path.
+- A single-package repository publishes only if its root isn't private and its version isn't on
+  npm yet, so re-running a release doesn't fail on an existing version.
+- `dry-run` is `true` if any package was packed, whatever order the packages were handled in.
+- The Slack message keeps a scoped name's `@`.
 
-### Slack announce
+## Security
 
-You can optionally send deployment announcements to Slack by providing a `slack-webhook-url` input:
+- No repository-controlled code runs from the sanitize step onward: no repository
+  `.yarnrc.yml`, Yarn plugins, `yarnPath`, lifecycle scripts or `YARN_*` overrides.
+- Packages are published only to `https://registry.npmjs.org`.
+- The token is used only for a package's first publish; existing packages publish only with OIDC,
+  staged and with provenance.
+- No manifest value is interpolated into a `run:` step.
 
-The absolute minimum configuration for this is:
+## Tests
 
-```yaml
-- uses: MetaMask/action-npm-publish@v6
-  with:
-    slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-```
-
-We've added the ability to customize the message posted in Slack and those optional inputs are as follows:
-
-- `icon-url`
-- `username`
-- `subteam`
-- `channel`
-
-example:
-
-```yaml
-- uses: MetaMask/action-npm-publish@v6
-  with:
-    slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
-    icon-url: https://ricky.codes/me.jpg
-    username: rickybot
-    # re subteam, see: https://api.slack.com/reference/surfaces/formatting#mentioning-groups
-    subteam: S042S7RE4AE # @metamask-npm-publishers
-    channel: dev-channel
-```
-
-You can read more about these option in the [API](#API) section below
-
-![image](https://user-images.githubusercontent.com/675259/203841602-124d537d-7476-4263-a17c-6d05b68c37d0.png)
-
-## API
-
-### Inputs
-
-- **`npm-token`** _(optional)_. The auth token for the NPM registry. Only used for the initial publish of a package that has not been published before, to allow OIDC to be set up for all subsequent publishes. If omitted, the action will attempt to use OIDC. If neither a token nor OIDC is available, the action will perform a dry run.
-
-- **`npm-tag`** _(optional)_. The npm tag to publish to. Defaults to `latest`.
-
-- **`staged-publish`** _(optional)_. Whether to use staged publishing when publishing via OIDC. Defaults to `true`. If set to `false`, the action will publish directly to NPM without a staging step.
-
-- **`slack-webhook-url`** _(optional)_. The incoming webhook URL associated with your Slack application for announcing releases to a Slack channel. This can be added under the "Incoming Webhooks" section of your Slack app configuration.
-
-#### The following inputs only apply if `slack-webhook-url` is set...
-
-- **`icon-url`** _(optional)_. Url to the avatar used for the bot in Slack. If not set this defaults to the avatar in this repository.
-- **`username`** _(optional)_. The name of the bot as it appears on Slack. If not set this defaults to `MetaMask bot`.
-- **`subteam`** _(optional)_. Use this if you want to ping a subteam of individuals on Slack using `@`.
-- **`channel`** _(optional)_. Use this if you want to post to a channel other than the default: `metamask-dev`.
+`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims.
+`.github/workflows/test_npm-publish.yml` runs it, and runs the action with real Yarn against
+fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a
+foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath` and lifecycle scripts
+would write marker files, and the Slack notification against a local listener.
