@@ -460,6 +460,15 @@ case_injected_file_path() {
   expect fail "file path with \\r::warning::" "Changelog check failed for package packages/pub"
 }
 
+# git C-quotes a path with control characters unless the list is
+# NUL-separated, and a quoted path maps to no package.
+case_control_character_path_without_entry() {
+  monorepo "$WORK/control-character-path"
+  echo "export const y = 2;" >"packages/pub/src/a"$'\r'"b.ts"
+  commit
+  expect fail "path with \\r, without entry" "Changelog check failed for package packages/pub"
+}
+
 # The script's own warning is emitted with commands resumed, and git's
 # multi-line error in it is escaped onto one line.
 case_fetch_fails() {

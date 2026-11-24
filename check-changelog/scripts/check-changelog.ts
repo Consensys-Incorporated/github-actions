@@ -192,8 +192,17 @@ function getChangedFiles(repoPath: string, baseRef: string): string[] {
   }
 
   try {
-    return git(repoPath, ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${baseRef}...HEAD`])
-      .split('\n')
+    // -z: otherwise git C-quotes a path with control characters, which then
+    // maps to no package, so a change could be hidden that way.
+    return git(repoPath, [
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '-z',
+      '--name-only',
+      `origin/${baseRef}...HEAD`,
+    ])
+      .split('\0')
       .filter(Boolean);
   } catch (error) {
     logError(`Failed to get changed files: ${errorMessage(error)}`);
