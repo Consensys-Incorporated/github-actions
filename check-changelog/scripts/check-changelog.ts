@@ -10,6 +10,7 @@ import { parseChangelog } from '@metamask/auto-changelog';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import semver from 'semver';
 
 import { analyzePackageJsonDiff } from './package-json-diff.ts';
 import type { PackageJsonChanges } from './package-json-diff.ts';
@@ -241,6 +242,13 @@ async function checkChangelogFile({
 
     let releaseSection = 'Unreleased';
     if (packageVersion) {
+      // auto-changelog rejects non-semver release headers, so no section
+      // could match.
+      if (!semver.valid(packageVersion)) {
+        throw new Error(
+          `The new version '${packageVersion}' in ${path.join(path.dirname(changelogPath), 'package.json')} is not valid semver, so its changelog section can't be checked. If the changelog is up to date, you can bypass this check by adding the 'no-changelog' label to the PR.`,
+        );
+      }
       const versionChanges = changelog.getReleaseChanges(packageVersion);
       if (versionChanges && Object.keys(versionChanges).length > 0) {
         releaseSection = packageVersion;

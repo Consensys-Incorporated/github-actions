@@ -95,8 +95,8 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
 - A `version` that is not valid semver no longer makes the check skip the `package.json`.
   Upstream's downgrade comparison threw, and the error was caught as "no changes". The change is
   now classified like any other: it is not a downgrade, and if other fields changed too, the
-  changelog section for that version is required (and, as auto-changelog rejects non-semver
-  release headers, the check fails).
+  check fails with an error saying the version is not valid semver, so its changelog section
+  can't be checked, and that the `no-changelog` label skips the check.
 
 ## Security
 

@@ -306,7 +306,7 @@ case_invalid_version_and_deps() {
   changelog "$entry" >packages/pub/CHANGELOG.md
   commit
   expect fail "version bump to invalid semver and dependencies change" \
-    "Could not find section for version '1.1'"
+    "The new version '1.1' in packages/pub/package.json is not valid semver" "no-changelog"
 }
 
 case_two_packages_one_missing() {
