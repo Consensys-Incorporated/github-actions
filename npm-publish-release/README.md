@@ -11,7 +11,9 @@ v3 (MIT), in bash and jq: no `dist/`, no `package.json`, nothing installed at ru
 
 ## Usage
 
-Run it after checking out the release commit, in a job with `contents: write`.
+Run it after checking out the commit the workflow runs on (`github.sha`), in a job with
+`contents: write`. The release targets `github.sha` and the tags go on `HEAD`, so the action
+fails before creating anything if they differ.
 
 ```yaml
 jobs:
@@ -55,9 +57,10 @@ variable.
      At least one package must be released.
    - The notes are a `## <name> <version>` section per released package, in workspace order,
      each followed by the body of its changelog's `## [<version>]` section, which must exist.
-4. Create the release with `gh release create v<version> --title <version> --notes-file …
+4. Fail if `HEAD` is not `github.sha`.
+5. Create the release with `gh release create v<version> --title <version> --notes-file …
    --target <github.sha>`.
-5. Monorepo: tag `HEAD` with `<name>@<version>` for each released package and push those tags.
+6. Monorepo: tag `HEAD` with `<name>@<version>` for each released package and push those tags.
 
 A changelog section's body is the lines after its `## [<version>]` heading, up to the next `## `
 heading or the first link reference definition, with blank lines trimmed at both ends.
@@ -75,6 +78,8 @@ heading or the first link reference definition, with blank lines trimmed at both
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
 - The notes are passed with `--notes-file` instead of as an argument.
+- The action fails before creating anything if `HEAD` is not `github.sha`. Upstream created the
+  release at `github.sha` and tagged `HEAD` regardless.
 - Only the new tags are pushed, by name, instead of `git push --tags`, to `GITHUB_SERVER_URL`
   instead of a hard-coded `github.com`.
 

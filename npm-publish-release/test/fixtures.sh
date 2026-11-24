@@ -172,11 +172,17 @@ run_prepare() {
   set -e
 }
 
+# run_create <dir> <mode> <version> [<release commit>]: runs create-release.sh
+# in <dir>, with the release commit defaulting to HEAD. Sets CREATE_STATUS and
+# CREATE_LOG.
 run_create() {
-  local dir="$1" mode="$2" version="$3"
+  local dir="$1" mode="$2" version="$3" commit="${4:-}"
+  if [[ -z "$commit" ]]; then
+    commit="$(git -C "$dir" rev-parse HEAD)"
+  fi
   set +e
   CREATE_LOG="$(cd "$dir" && PATH="$WORK/shims:$PATH" SHIM_LOG="$dir.out/shim.log" GH_TOKEN=token \
-    RELEASE_COMMIT_ID="$(git rev-parse HEAD)" RELEASE_VERSION="$version" RELEASE_MODE="$mode" \
+    RELEASE_COMMIT_ID="$commit" RELEASE_VERSION="$version" RELEASE_MODE="$mode" \
     RELEASE_DIR="$dir.out/release" "$SCRIPTS/create-release.sh" 2>&1)"
   CREATE_STATUS=$?
   set -e
@@ -458,6 +464,22 @@ test_config_errors() {
   expect_prepare_failure "duplicate workspace names fail" "Duplicate workspace name @octo/a"
 }
 
+test_head_mismatch() {
+  local dir="$WORK/head-mismatch" release_commit
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  release_commit="$(git -C "$dir" rev-parse HEAD)"
+  git -C "$dir" commit -q --allow-empty -m "After the release"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0 "$release_commit"
+  if ((CREATE_STATUS != 0)) && grep -qF "is not the release commit ($release_commit)" <<<"$CREATE_LOG" &&
+    [[ ! -s "$dir.out/shim.log" && -z "$(git -C "$dir" tag)" ]]; then
+    pass "HEAD other than the release commit fails before creating anything"
+  else
+    fail "HEAD other than the release commit fails" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+}
+
 test_polyrepo() {
   local dir="$WORK/polyrepo"
   mkdir -p "$dir"
@@ -500,6 +522,7 @@ test_missing_section
 test_nothing_to_release
 test_lookup_error
 test_config_errors
+test_head_mismatch
 test_polyrepo
 
 count="$(wc -l <"$FAILURES" | tr -d ' ')"

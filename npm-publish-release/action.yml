@@ -4,7 +4,8 @@ name: 'npm-publish-release'
 description: >-
   Create a GitHub release v<root version> with notes from the changelog. In a
   monorepo with independently versioned packages, release each public package
-  whose <name>@<version> tag does not exist yet, and push those tags.
+  whose <name>@<version> tag does not exist yet, and push those tags. The
+  checked-out HEAD must be github.sha.
 
 outputs:
   release-version:

@@ -22,20 +22,23 @@ jobs:
       - run: npm-publish-release/test/fixtures.sh
 
   # The action in a fixture monorepo workspace, with gh and git push shimmed.
+  # The fixture files are laid over a checkout of this repository, uncommitted,
+  # so that HEAD is github.sha as the action requires.
   action:
     name: Action
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          path: actions-repo
           persist-credentials: false
       - name: Prepare fixture workspace and shims
         run: |
           dir="$RUNNER_TEMP/fixture"
-          actions-repo/npm-publish-release/test/fixtures.sh --prepare-workspace "$dir"
+          npm-publish-release/test/fixtures.sh --prepare-workspace "$dir"
           shopt -s dotglob
-          mv "$dir"/* .
+          for file in "$dir"/*; do
+            [[ "${file##*/}" == .git ]] || mv "$file" .
+          done
           echo "$dir.shims" >>"$GITHUB_PATH"
           {
             echo "SHIM_LOG=$RUNNER_TEMP/shim.log"
@@ -45,7 +48,7 @@ jobs:
           git config user.email test@example.com
       - name: Run action
         id: action
-        uses: ./actions-repo/npm-publish-release
+        uses: ./npm-publish-release
       - name: Assert outputs, release and tags
         env:
           RELEASE_VERSION: ${{ steps.action.outputs.release-version }}
