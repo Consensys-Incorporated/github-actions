@@ -149,7 +149,7 @@ case_code_without_entry() {
   changelog "$other_entry" >packages/pub/CHANGELOG.md
   commit
   expect fail "code change without entry" \
-    "Changelog check failed for package pub" "packages/pub/CHANGELOG.md" '"Unreleased" section' "no-changelog"
+    "Changelog check failed for package packages/pub" "packages/pub/CHANGELOG.md" '"Unreleased" section' "no-changelog"
 }
 
 # git quotes non-ASCII paths unless core.quotePath is off.
@@ -157,7 +157,7 @@ case_non_ascii_path_without_entry() {
   monorepo "$WORK/non-ascii-path"
   echo "export const z = 3;" >"packages/pub/src/naïve.ts"
   commit
-  expect fail "non-ASCII path without entry" "Changelog check failed for package pub"
+  expect fail "non-ASCII path without entry" "Changelog check failed for package packages/pub"
 }
 
 case_private_only() {
@@ -258,8 +258,8 @@ case_two_packages_one_missing() {
   changelog "$entry" >packages/pub/CHANGELOG.md
   commit
   expect fail "two packages, one missing its entry" \
-    "CHANGELOG.md for pub has been correctly updated." \
-    "Changelog check failed for package other" \
+    "CHANGELOG.md for packages/pub has been correctly updated." \
+    "Changelog check failed for package packages/other" \
     "One or more changelog checks failed"
 }
 
@@ -269,8 +269,44 @@ case_two_packages_both_missing() {
   echo "export const y = 2;" >>packages/other/src/index.ts
   commit
   expect fail "two packages, both missing entries" \
-    "Changelog check failed for package pub" \
-    "Changelog check failed for package other"
+    "Changelog check failed for package packages/pub" \
+    "Changelog check failed for package packages/other"
+}
+
+# Adds a second workspace root, libs/*, with a package also named pub, and
+# publishes it as the new base. libs/ sorts before packages/, so its files are
+# seen first.
+add_libs_root() {
+  jq '.workspaces += ["libs/*"]' package.json >package.json.tmp
+  mv package.json.tmp package.json
+  mkdir -p libs/pub/src
+  package_json libs-pub 1.0.0 "$1" >libs/pub/package.json
+  changelog "" >libs/pub/CHANGELOG.md
+  echo "export const x = 1;" >libs/pub/src/index.ts
+  commit
+  publish_base
+}
+
+case_same_directory_name_in_two_roots() {
+  monorepo "$WORK/same-dir-name"
+  add_libs_root false
+  echo "export const y = 2;" >>libs/pub/src/index.ts
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  changelog "$entry" >packages/pub/CHANGELOG.md
+  commit
+  expect fail "same directory name in two workspace roots, one missing its entry" \
+    "Changelog check failed for package libs/pub" \
+    "CHANGELOG.md for packages/pub has been correctly updated."
+}
+
+case_same_directory_name_private_in_other_root() {
+  monorepo "$WORK/same-dir-name-private"
+  add_libs_root true
+  echo "export const y = 2;" >>libs/pub/src/index.ts
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  commit
+  expect fail "public package named like a private one in another root" \
+    "Changelog check failed for package packages/pub"
 }
 
 case_stale_base() {

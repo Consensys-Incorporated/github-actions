@@ -73,6 +73,9 @@ starting with `}` after it, and only the first `"devDependencies":` is considere
 - `execa` is replaced by `node:child_process`.
 - Changed files are listed with `core.quotePath` off, so a path with non-ASCII characters still
   maps to its package.
+- Packages are identified by directory (`packages/foo`) rather than by directory name (`foo`), so
+  two workspace roots with a package directory of the same name are checked separately, and a
+  private package does not exempt a public one of the same name. Log messages name the directory.
 
 ## Security
 

@@ -267,11 +267,13 @@ async function getChangedPackages(
       continue;
     }
 
-    let isPrivate = privatePackageCache.get(packageInfo.package);
+    // Keyed by directory: two workspace roots can hold packages with the
+    // same directory name.
+    const packageDir = path.join(packageInfo.base, packageInfo.package);
+    let isPrivate = privatePackageCache.get(packageDir);
     if (isPrivate === undefined) {
-      const packageJsonPath = path.join(packageInfo.base, packageInfo.package, 'package.json');
-      isPrivate = await isPrivatePackage(repoPath, packageJsonPath);
-      privatePackageCache.set(packageInfo.package, isPrivate);
+      isPrivate = await isPrivatePackage(repoPath, path.join(packageDir, 'package.json'));
+      privatePackageCache.set(packageDir, isPrivate);
     }
     if (isPrivate) {
       continue;
@@ -293,32 +295,32 @@ async function getChangedPackages(
         continue;
       }
       if (changes.isVersionOnly) {
-        console.log(`Skipping package.json in ${packageInfo.package} as it only contains version changes`);
+        console.log(`Skipping package.json in ${packageDir} as it only contains version changes`);
         continue;
       }
       if (changes.isVersionDowngrade) {
         console.log(
-          `Skipping package.json in ${packageInfo.package} as it contains a version downgrade (revert)`,
+          `Skipping package.json in ${packageDir} as it contains a version downgrade (revert)`,
         );
         continue;
       }
       if (changes.isDevDependencyOnly) {
         console.log(
-          `Skipping package.json in ${packageInfo.package} as it only contains dev dependency changes`,
+          `Skipping package.json in ${packageDir} as it only contains dev dependency changes`,
         );
         continue;
       }
       if (changes.isVersionAndDevDependencyOnly) {
         console.log(
-          `Skipping package.json in ${packageInfo.package} as it only contains version and dev dependency changes`,
+          `Skipping package.json in ${packageDir} as it only contains version and dev dependency changes`,
         );
         continue;
       }
       newVersion = changes.newVersion;
     }
 
-    const existing = changedPackages.get(packageInfo.package);
-    changedPackages.set(packageInfo.package, {
+    const existing = changedPackages.get(packageDir);
+    changedPackages.set(packageDir, {
       ...packageInfo,
       newVersion: existing?.newVersion ?? newVersion,
     });
@@ -375,7 +377,8 @@ async function main(argv: string[]): Promise<void> {
 
   const results = await Promise.all(
     changedPackages.map(async (pkg) => {
-      const changelogPath = path.join(pkg.base, pkg.package, 'CHANGELOG.md');
+      const packageDir = path.join(pkg.base, pkg.package);
+      const changelogPath = path.join(packageDir, 'CHANGELOG.md');
       try {
         await checkChangelogFile({
           repoPath: fullRepoPath,
@@ -383,10 +386,10 @@ async function main(argv: string[]): Promise<void> {
           prNumber,
           packageVersion: pkg.newVersion ?? null,
         });
-        console.log(`CHANGELOG.md for ${pkg.package} has been correctly updated.`);
+        console.log(`CHANGELOG.md for ${packageDir} has been correctly updated.`);
         return true;
       } catch (error) {
-        logError(`Changelog check failed for package ${pkg.package}: ${errorMessage(error)}`);
+        logError(`Changelog check failed for package ${packageDir}: ${errorMessage(error)}`);
         return false;
       }
     }),
