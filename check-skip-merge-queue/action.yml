@@ -3,17 +3,26 @@
 name: 'check-skip-merge-queue'
 description: >-
   In a merge_group run, report whether the pull request is first in the merge
-  queue and its head commit already contains the base branch. If so, the
-  caller can skip jobs that the pull request's own run already ran on the same
-  tree.
+  queue and its head commit already contains the merge group's base commit.
+  If so, the caller can skip jobs that the pull request's own run already ran
+  on the same tree.
 
 inputs:
   head-ref:
     description: 'The merge group head ref. Defaults to the head ref of the merge_group event.'
     required: false
     default: ${{ github.event.merge_group.head_ref }}
+  base-sha:
+    description: >-
+      The commit the merge group was built on. Defaults to the base SHA of the
+      merge_group event. If empty, the current tip of `base-ref` is used
+      instead.
+    required: false
+    default: ${{ github.event.merge_group.base_sha }}
   base-ref:
-    description: 'The base branch, with or without `refs/heads/`. Defaults to the base ref of the merge_group event.'
+    description: >-
+      The base branch, with or without `refs/heads/`. Used only when
+      `base-sha` is empty. Defaults to the base ref of the merge_group event.
     required: false
     default: ${{ github.event.merge_group.base_ref }}
   github-token:
@@ -27,8 +36,9 @@ outputs:
     value: ${{ steps.pr-details.outputs.pr-number }}
   up-to-date:
     description: >-
-      `true` if the pull request is first in the merge queue and up to date
-      with the base branch; `false` otherwise, including when a lookup fails.
+      `true` if the pull request is first in the merge queue and its head
+      commit contains the merge group's base commit; `false` otherwise,
+      including when a lookup fails.
     value: ${{ steps.up-to-date.outputs.up-to-date || 'false' }}
 
 runs:
@@ -56,6 +66,7 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
         BASE_REF: ${{ inputs.base-ref }}
+        BASE_SHA: ${{ inputs.base-sha }}
         PR_HEAD_SHA: ${{ steps.pr-details.outputs.pr-head-sha }}
         MERGE_QUEUE_POSITION: ${{ steps.pr-details.outputs.merge-queue-position }}
         SCRIPT_PATH: ${{ github.action_path }}/scripts/check-skip-merge-queue.cjs
@@ -68,6 +79,7 @@ runs:
             context,
             core,
             baseRef: process.env.BASE_REF,
+            baseSha: process.env.BASE_SHA,
             prHeadSha: process.env.PR_HEAD_SHA,
             mergeQueuePosition: process.env.MERGE_QUEUE_POSITION,
           });

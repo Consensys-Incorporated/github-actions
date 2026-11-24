@@ -136,6 +136,8 @@ describe('getPullRequestDetails', () => {
   });
 });
 
+const BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
+
 describe('checkUpToDate', () => {
   for (const [status, expected] of [
     ['identical', 'true'],
@@ -151,17 +153,73 @@ describe('checkUpToDate', () => {
         context,
         core,
         baseRef: 'main',
+        baseSha: BASE_SHA,
         prHeadSha: 'abc123',
         mergeQueuePosition: '1',
       });
       assert.deepEqual(calls.compare, [
-        { owner: 'octo', repo: 'repo', basehead: 'main...abc123' },
+        { owner: 'octo', repo: 'repo', basehead: `${BASE_SHA}...abc123` },
       ]);
       assert.deepEqual(core.outputs, { 'up-to-date': expected });
     });
   }
 
-  it('strips refs/heads/ from the base ref', async () => {
+  it('accepts a SHA-256 base SHA', async () => {
+    const core = makeCore();
+    const { github, calls } = makeGithub();
+    const baseSha = `${BASE_SHA}${'0'.repeat(24)}`;
+    await checkUpToDate({
+      github,
+      context,
+      core,
+      baseRef: 'main',
+      baseSha,
+      prHeadSha: 'abc123',
+      mergeQueuePosition: '1',
+    });
+    assert.deepEqual(calls.compare, [
+      { owner: 'octo', repo: 'repo', basehead: `${baseSha}...abc123` },
+    ]);
+  });
+
+  for (const baseSha of ['main', 'ABCDEF0123456789ABCDEF0123456789ABCDEF01', `${BASE_SHA}\n::warning::x`]) {
+    it(`fails without comparing for base SHA ${JSON.stringify(baseSha)}`, async () => {
+      const core = makeCore();
+      const { github, calls } = makeGithub();
+      await checkUpToDate({
+        github,
+        context,
+        core,
+        baseRef: 'main',
+        baseSha,
+        prHeadSha: 'abc123',
+        mergeQueuePosition: '1',
+      });
+      assert.match(core.failed, /not a full hexadecimal commit SHA/u);
+      assert.equal(calls.compare.length, 0);
+      assert.deepEqual(core.outputs, {});
+    });
+  }
+
+  it('compares against the full base branch ref when there is no base SHA', async () => {
+    const core = makeCore();
+    const { github, calls } = makeGithub();
+    await checkUpToDate({
+      github,
+      context,
+      core,
+      baseRef: 'main',
+      baseSha: '',
+      prHeadSha: 'abc123',
+      mergeQueuePosition: '1',
+    });
+    assert.deepEqual(calls.compare, [
+      { owner: 'octo', repo: 'repo', basehead: 'refs/heads/main...abc123' },
+    ]);
+    assert.deepEqual(core.outputs, { 'up-to-date': 'true' });
+  });
+
+  it('accepts a base ref with or without refs/heads/', async () => {
     const core = makeCore();
     const { github, calls } = makeGithub();
     await checkUpToDate({
@@ -173,19 +231,19 @@ describe('checkUpToDate', () => {
       mergeQueuePosition: '1',
     });
     assert.deepEqual(calls.compare, [
-      { owner: 'octo', repo: 'repo', basehead: 'release/1.x...abc123' },
+      { owner: 'octo', repo: 'repo', basehead: 'refs/heads/release/1.x...abc123' },
     ]);
   });
 
   for (const [name, args] of [
-    ['an empty base ref', { baseRef: '', prHeadSha: 'abc123' }],
-    ['an empty head SHA', { baseRef: 'main', prHeadSha: '' }],
+    ['an empty base ref and base SHA', { baseRef: '', baseSha: '', prHeadSha: 'abc123' }],
+    ['an empty head SHA', { baseRef: 'main', baseSha: BASE_SHA, prHeadSha: '' }],
   ]) {
     it(`fails without comparing for ${name}`, async () => {
       const core = makeCore();
       const { github, calls } = makeGithub();
       await checkUpToDate({ github, context, core, mergeQueuePosition: '1', ...args });
-      assert.match(core.failed, /Missing base branch/u);
+      assert.match(core.failed, /Missing base SHA and branch/u);
       assert.equal(calls.compare.length, 0);
       assert.deepEqual(core.outputs, {});
     });

@@ -68,7 +68,12 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
 
 /**
  * Sets the `up-to-date` output: `true` if the pull request is first in the
- * merge queue and its head commit contains the base branch.
+ * merge queue and its head commit contains the merge group's base commit.
+ *
+ * The merge group's base is compared by SHA when one is given: it is the
+ * commit the merge group was built on, and a SHA can't be shadowed by a tag
+ * with the same name as the base branch. Without one, the base branch's
+ * current tip is used, named by its full ref for the same reason.
  *
  * The head is compared by SHA, not branch name: a fork's branch doesn't exist
  * in this repository, and a branch can move after the lookup.
@@ -78,13 +83,20 @@ async function getPullRequestDetails({ github, context, core, headRef }) {
  * @param {object} args.context - github-script context.
  * @param {object} args.core - @actions/core.
  * @param {string} args.baseRef - Base branch, with or without `refs/heads/`.
+ * Used only when `baseSha` is empty.
+ * @param {string} [args.baseSha] - The merge group's base commit.
  * @param {string} args.prHeadSha - Pull request head commit.
  * @param {string} args.mergeQueuePosition - Position, as a string.
  */
-async function checkUpToDate({ github, context, core, baseRef, prHeadSha, mergeQueuePosition }) {
+async function checkUpToDate({ github, context, core, baseRef, baseSha, prHeadSha, mergeQueuePosition }) {
   const base = (baseRef ?? '').replace(/^refs\/heads\//u, '');
-  if (!base || !prHeadSha) {
-    core.setFailed(`Missing base branch ("${base}") or pull request head ("${prHeadSha}").`);
+  const sha = baseSha ?? '';
+  if (sha && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(sha)) {
+    core.setFailed('The base SHA is not a full hexadecimal commit SHA.');
+    return;
+  }
+  if ((!sha && !base) || !prHeadSha) {
+    core.setFailed(`Missing base SHA and branch ("${base}") or pull request head ("${prHeadSha}").`);
     return;
   }
 
@@ -94,17 +106,18 @@ async function checkUpToDate({ github, context, core, baseRef, prHeadSha, mergeQ
     return;
   }
 
+  const baseName = sha ? `base commit ${sha}` : `base branch "${base}"`;
   const comparison = await github.rest.repos.compareCommitsWithBasehead({
     owner: context.repo.owner,
     repo: context.repo.repo,
-    basehead: `${base}...${prHeadSha}`,
+    basehead: `${sha || `refs/heads/${base}`}...${prHeadSha}`,
   });
 
   if (comparison.data.status === 'identical' || comparison.data.status === 'ahead') {
-    core.info(`Pull request head ${prHeadSha} is up-to-date with base branch "${base}".`);
+    core.info(`Pull request head ${prHeadSha} is up-to-date with ${baseName}.`);
     core.setOutput('up-to-date', 'true');
   } else {
-    core.info(`Pull request head ${prHeadSha} is not up-to-date with base branch "${base}".`);
+    core.info(`Pull request head ${prHeadSha} is not up-to-date with ${baseName}.`);
     core.setOutput('up-to-date', 'false');
   }
 }
