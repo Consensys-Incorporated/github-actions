@@ -1,0 +1,91 @@
+name: Test check-changelog
+
+on:
+  push:
+    paths:
+      - 'check-changelog/**'
+      - '.github/workflows/test_check-changelog.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  script:
+    name: Script
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: check-changelog
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Fixture repository tests
+        run: test/fixtures.sh
+
+  no-changelog-label:
+    name: no-changelog label skips the check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Run action
+        uses: ./check-changelog
+        with:
+          labels: '[{"name": "bug"}, {"name": "no-changelog"}]'
+          # Would fail if the action tried to check it out.
+          repo: Consensys-Incorporated/does-not-exist
+          head-ref: does-not-exist
+          pr-number: '1'
+      - name: Assert nothing was checked out
+        run: test ! -e target-repo
+
+  # End to end against a merged ocap-kernel pull request whose pre-merge head
+  # changed a public package and added a changelog entry linking it.
+  ocap-kernel:
+    name: ocap-kernel PR (pr-number ${{ matrix.pr-number }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pr-number: '1290'
+            expected: success
+          - pr-number: '1'
+            expected: failure
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Run action
+        id: action
+        continue-on-error: true
+        uses: ./actions-repo/check-changelog
+        with:
+          base-branch: main
+          head-ref: refs/pull/1290/head
+          labels: '[{"name": "bug"}]'
+          pr-number: ${{ matrix.pr-number }}
+          repo: Consensys-Incorporated/ocap-kernel
+      - name: Assert outcome
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          EXPECTED: ${{ matrix.expected }}
+        run: |
+          if [[ "$OUTCOME" != "$EXPECTED" ]]; then
+            echo "::error::Expected $EXPECTED, got $OUTCOME"
+            exit 1
+          fi
