@@ -1,44 +1,56 @@
-name: 'Is this a release?'
-description: "This action checks to see if the .version key in a repository's package.json has changed in order to determine if this commit is a release commit"
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'npm-is-release'
+description: >-
+  Decide whether the pushed commit is a release: the root package.json
+  version changed since the previous commit and, optionally, the commit
+  message starts with one of a set of prefixes.
 
 inputs:
   commit-starts-with:
-    description: "Validate that the release commit starts with a string in this comma-separated list. Use '[version]' to refer to the current release version."
+    description: >-
+      Comma-separated prefixes, one of which the commit message must start
+      with. `[version]` is replaced by the new version. If empty, a version
+      change alone makes a release.
     required: false
-
+    default: ''
   commit-message:
-    description: "The commit message to check. If not provided, the action will get the message from the current commit."
+    description: 'The commit message to check. Defaults to the subject of the checked-out commit.'
     required: false
-    default: ""
-
+    default: ''
   before:
-    description: "The commit SHA before the current commit."
+    description: 'The commit to compare with. Defaults to the push event''s `before`.'
     required: false
     default: ${{ github.event.before }}
-
   skip-checkout:
-    description: "If 'true', the action will skip the checkout step. Use this if the repository has already been checked out. Note that the action requires at least two commits to be fetched."
+    description: >-
+      `true` to reuse the caller's checkout, which must have `before`
+      reachable or fetchable (e.g. `fetch-depth: 2` for a single-commit push).
     required: false
-    default: "false"
+    default: 'false'
 
 outputs:
   IS_RELEASE:
-    description: 'Is this a release? can be either "true" or "false".'
+    description: '`true` or `false`.'
     value: ${{ steps.is-release.outputs.IS_RELEASE }}
 
 runs:
-  using: 'composite'
+  using: composite
   steps:
-    - uses: actions/checkout@v7
+    - name: Check out repository
       if: ${{ inputs.skip-checkout != 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         ref: ${{ github.sha }}
-        # we need this commit + the last so we can compare below
+        # This commit and the one before, for the comparison.
         fetch-depth: 2
-    - id: is-release
+
+    - name: Check whether this is a release
+      id: is-release
       shell: bash
       env:
         BEFORE: ${{ inputs.before }}
         COMMIT_STARTS_WITH: ${{ inputs.commit-starts-with }}
         COMMIT_MESSAGE: ${{ inputs.commit-message }}
-      run: ${{ github.action_path }}/scripts/is-release.sh
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/is-release.sh"'

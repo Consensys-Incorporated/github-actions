@@ -1,47 +1,69 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Decides whether HEAD is a release commit: the root package.json version
+# differs from the one at BEFORE, and, if COMMIT_STARTS_WITH is set, the commit
+# message starts with one of its comma-separated prefixes (with "[version]"
+# replaced by the new version).
+#
+# Environment:
+#   BEFORE: the commit to compare with (required)
+#   COMMIT_STARTS_WITH: comma-separated prefixes (optional)
+#   COMMIT_MESSAGE: message to check instead of HEAD's subject (optional)
+#
+# Outputs (to $GITHUB_OUTPUT): IS_RELEASE=true|false
 
-set -e
-set -o pipefail
+set -euo pipefail
 
-if [ "${RUNNER_DEBUG:-}" = "1" ]; then
+if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
   set -x
 fi
 
-if [[ -z $BEFORE ]]; then
-  echo "Error: Before SHA not specified."
+COMMIT_STARTS_WITH="${COMMIT_STARTS_WITH:-}"
+COMMIT_MESSAGE="${COMMIT_MESSAGE:-}"
+
+if [[ -z "${BEFORE:-}" ]]; then
+  echo "::error::The before SHA is not set."
   exit 1
 fi
 
-git fetch origin "$BEFORE"
+# Fetch BEFORE in case the push contained more than one commit.
+git fetch --quiet origin "$BEFORE"
 
-VERSION_BEFORE="$(git show "$BEFORE":package.json | jq --raw-output .version)"
-VERSION_AFTER="$(jq --raw-output .version package.json)"
+version_before="$(git show "$BEFORE:package.json" | jq --raw-output .version)"
+version_after="$(jq --raw-output .version package.json)"
 
-if [[ "$VERSION_BEFORE" == "$VERSION_AFTER" ]]; then
-  echo "Notice: version unchanged. Skipping release."
-  echo "IS_RELEASE=false" >> "$GITHUB_OUTPUT"
+set_output() {
+  echo "IS_RELEASE=$1" >>"$GITHUB_OUTPUT"
+}
+
+if [[ "$version_before" == "$version_after" ]]; then
+  echo "Version unchanged ($version_after). Not a release."
+  set_output false
   exit 0
-elif [[ -n $COMMIT_STARTS_WITH ]]; then
-  if [[ -z $COMMIT_MESSAGE ]]; then
+fi
+
+if [[ -n "$COMMIT_STARTS_WITH" ]]; then
+  if [[ -z "$COMMIT_MESSAGE" ]]; then
     COMMIT_MESSAGE="$(git log --max-count=1 --format=%s)"
   fi
 
   match_found=false
-
-  IFS=',' read -ra RAW_PREFIXES <<< "${COMMIT_STARTS_WITH}"
-  for RAW_PREFIX in "${RAW_PREFIXES[@]}"; do
-    EXPECTED_COMMIT_PREFIX="${RAW_PREFIX//\[version\]/$VERSION_AFTER}"
-    if [[ $COMMIT_MESSAGE =~ ^$EXPECTED_COMMIT_PREFIX ]]; then
+  IFS=',' read -ra raw_prefixes <<<"$COMMIT_STARTS_WITH"
+  for raw_prefix in "${raw_prefixes[@]}"; do
+    prefix="${raw_prefix//\[version\]/$version_after}"
+    if [[ $COMMIT_MESSAGE =~ ^$prefix ]]; then
       match_found=true
-      break;
+      break
     fi
   done
 
-  if [[ $match_found == false ]]; then
-      echo "Notice: commit message does not start with \"${COMMIT_STARTS_WITH}\". Skipping release."
-      echo "IS_RELEASE=false" >> "$GITHUB_OUTPUT"
-      exit 0
+  if [[ "$match_found" == false ]]; then
+    echo "Commit message does not start with any of \"$COMMIT_STARTS_WITH\" (version $version_after). Not a release."
+    set_output false
+    exit 0
   fi
 fi
 
-echo "IS_RELEASE=true" >> "$GITHUB_OUTPUT"
+echo "Version changed from $version_before to $version_after. This is a release."
+set_output true
