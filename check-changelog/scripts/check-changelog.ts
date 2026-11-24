@@ -160,19 +160,27 @@ function analyzePackageJsonChanges(
 }
 
 /**
- * Whether a package.json has `"private": true`.
+ * Reads a package's visibility from its package.json.
  *
  * @param repoPath - The repository.
  * @param packageJsonPath - Path relative to the repository.
- * @returns True if private; false if not, or if unreadable.
+ * @returns 'missing' if the file does not exist (the package was deleted, or
+ * the directory is not a package), 'private' if it has `"private": true`,
+ * otherwise 'public' (also if it can't be read or parsed).
  */
-async function isPrivatePackage(repoPath: string, packageJsonPath: string): Promise<boolean> {
+async function getPackageVisibility(
+  repoPath: string,
+  packageJsonPath: string,
+): Promise<'missing' | 'private' | 'public'> {
   try {
     const content = await fs.readFile(path.join(repoPath, packageJsonPath), 'utf-8');
-    return (JSON.parse(content) as PackageJson).private === true;
+    return (JSON.parse(content) as PackageJson).private === true ? 'private' : 'public';
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return 'missing';
+    }
     logError(`Failed to check if package is private: ${errorMessage(error)}`);
-    return false;
+    return 'public';
   }
 }
 
@@ -255,7 +263,7 @@ async function getChangedPackages(
   baseRef: string,
 ): Promise<ChangedPackage[]> {
   const changedPackages = new Map<string, ChangedPackage>();
-  const privatePackageCache = new Map<string, boolean>();
+  const visibilityCache = new Map<string, 'missing' | 'private' | 'public'>();
 
   for (const file of files) {
     if (file.startsWith('.github/workflows/')) {
@@ -270,12 +278,15 @@ async function getChangedPackages(
     // Keyed by directory: two workspace roots can hold packages with the
     // same directory name.
     const packageDir = path.join(packageInfo.base, packageInfo.package);
-    let isPrivate = privatePackageCache.get(packageDir);
-    if (isPrivate === undefined) {
-      isPrivate = await isPrivatePackage(repoPath, path.join(packageDir, 'package.json'));
-      privatePackageCache.set(packageDir, isPrivate);
+    let visibility = visibilityCache.get(packageDir);
+    if (visibility === undefined) {
+      visibility = await getPackageVisibility(repoPath, path.join(packageDir, 'package.json'));
+      visibilityCache.set(packageDir, visibility);
+      if (visibility === 'missing') {
+        console.log(`Skipping ${packageDir}: it has no package.json (deleted, or not a package)`);
+      }
     }
-    if (isPrivate) {
+    if (visibility !== 'public') {
       continue;
     }
 

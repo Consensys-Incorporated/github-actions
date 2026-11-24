@@ -185,6 +185,13 @@ case_changelog_only() {
   expect pass "change only in CHANGELOG.md"
 }
 
+case_deleted_package() {
+  monorepo "$WORK/deleted-package"
+  git rm -rq packages/other
+  commit
+  expect pass "public package deleted" "Skipping packages/other: it has no package.json"
+}
+
 case_workflows_only() {
   monorepo "$WORK/workflows-only"
   echo "name: ci2" >.github/workflows/ci.yml
