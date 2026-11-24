@@ -215,6 +215,7 @@ describe('getDevDependencyLines', () => {
     );
     assert.deepEqual(getDevDependencyLines(output, ['-  "files": []', '+  "files": ["dist"]']), []);
   });
+
   it('ends the block at a removed or added closing brace', () => {
     const output = diff(
       ...HEAD,
