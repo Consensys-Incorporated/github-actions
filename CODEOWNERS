@@ -1,3 +1,5 @@
 *         @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
 
 .github/workflows/  @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
+check-changelog/  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
+.github/workflows/test_check-changelog.yml  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
