@@ -38,43 +38,12 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       env:
         HEAD_REF: ${{ inputs.head-ref }}
+        SCRIPT_PATH: ${{ github.action_path }}/scripts/check-skip-merge-queue.cjs
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          const { HEAD_REF } = process.env;
-          const match = HEAD_REF.match(/\/pr-([0-9]+)-/u);
-          if (!match) {
-            return core.setFailed(`Could not extract pull request number from head ref: "${HEAD_REF}".`);
-          }
-
-          const number = parseInt(match[1], 10);
-          const result = await github.graphql(`
-            query($owner: String!, $name: String!, $number: Int!) {
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) {
-                  headRefName
-                  mergeQueueEntry { position }
-                }
-              }
-            }
-          `, {
-            owner: context.repo.owner,
-            name: context.repo.repo,
-            number,
-          });
-
-          if (!result.repository.pullRequest) {
-            return core.setFailed(`Pull request #${number} not found in repository "${context.repo.owner}/${context.repo.repo}".`);
-          }
-
-          const position = result.repository.pullRequest.mergeQueueEntry?.position;
-          if (!position) {
-            return core.setFailed(`Pull request #${number} is not in the merge queue.`);
-          }
-
-          core.setOutput('pr-number', number);
-          core.setOutput('pr-branch', result.repository.pullRequest.headRefName);
-          core.setOutput('merge-queue-position', position);
+          const { getPullRequestDetails } = require(process.env.SCRIPT_PATH);
+          await getPullRequestDetails({ github, context, core, headRef: process.env.HEAD_REF });
 
     - name: Check if pull request is up to date with base branch
       id: up-to-date
@@ -84,27 +53,16 @@ runs:
         BASE_REF: ${{ inputs.base-ref }}
         PR_BRANCH: ${{ steps.pr-details.outputs.pr-branch }}
         MERGE_QUEUE_POSITION: ${{ steps.pr-details.outputs.merge-queue-position }}
+        SCRIPT_PATH: ${{ github.action_path }}/scripts/check-skip-merge-queue.cjs
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          const { BASE_REF, PR_BRANCH, MERGE_QUEUE_POSITION } = process.env;
-
-          if (parseInt(MERGE_QUEUE_POSITION, 10) !== 1) {
-            core.info(`Pull request is not first in the merge queue (position: ${MERGE_QUEUE_POSITION}).`);
-            core.setOutput('up-to-date', 'false');
-            return;
-          }
-
-          const comparison = await github.rest.repos.compareCommitsWithBasehead({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            basehead: `${BASE_REF}...${PR_BRANCH}`,
+          const { checkUpToDate } = require(process.env.SCRIPT_PATH);
+          await checkUpToDate({
+            github,
+            context,
+            core,
+            baseRef: process.env.BASE_REF,
+            prBranch: process.env.PR_BRANCH,
+            mergeQueuePosition: process.env.MERGE_QUEUE_POSITION,
           });
-
-          if (comparison.data.status === 'identical' || comparison.data.status === 'ahead') {
-            core.info(`Pull request branch "${PR_BRANCH}" is up-to-date with base branch "${BASE_REF}".`);
-            core.setOutput('up-to-date', 'true');
-          } else {
-            core.info(`Pull request branch "${PR_BRANCH}" is not up-to-date with base branch "${BASE_REF}".`);
-            core.setOutput('up-to-date', 'false');
-          }
