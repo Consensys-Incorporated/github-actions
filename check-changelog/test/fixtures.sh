@@ -189,7 +189,27 @@ case_deleted_package() {
   monorepo "$WORK/deleted-package"
   git rm -rq packages/other
   commit
-  expect pass "public package deleted" "Skipping packages/other: it has no package.json"
+  expect pass "public package deleted" "Skipping packages/other: its package.json was deleted"
+}
+
+# Only <root>/* patterns are supported: with packages/*/*, a file maps to
+# packages/group, which has no package.json, so the check fails rather than
+# skipping it.
+case_nested_workspace_pattern() {
+  new_repo "$WORK/nested-workspace-pattern"
+  jq -n '{name: "root", version: "1.0.0", private: true, workspaces: ["packages/*/*"]}' >package.json
+  mkdir -p packages/group/foo/src
+  package_json foo 1.0.0 false >packages/group/foo/package.json
+  changelog "" >packages/group/foo/CHANGELOG.md
+  echo "export const x = 1;" >packages/group/foo/src/index.ts
+  commit
+  publish_base
+  git checkout -q -b feature
+  echo "export const y = 2;" >>packages/group/foo/src/index.ts
+  changelog "$entry" >packages/group/foo/CHANGELOG.md
+  commit
+  expect fail "packages/*/* workspace pattern" \
+    "maps to packages/group, which has no package.json" "Only workspace patterns of the form <root>/* are supported"
 }
 
 case_workflows_only() {

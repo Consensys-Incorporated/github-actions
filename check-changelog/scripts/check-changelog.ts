@@ -160,13 +160,34 @@ function analyzePackageJsonChanges(
 }
 
 /**
+ * Whether a file existed at the merge base and is deleted at HEAD.
+ *
+ * @param repoPath - The repository.
+ * @param filePath - Path relative to the repository.
+ * @param baseRef - The base branch.
+ * @returns True if the diff since the merge base deletes the file.
+ */
+function isDeletedSinceBase(repoPath: string, filePath: string, baseRef: string): boolean {
+  // --no-renames: a moved package must count as deleted from its old path.
+  const output = git(repoPath, [
+    'diff',
+    '--no-renames',
+    '--name-only',
+    '--diff-filter=D',
+    `origin/${baseRef}...HEAD`,
+    '--',
+    filePath,
+  ]);
+  return output !== '';
+}
+
+/**
  * Reads a package's visibility from its package.json.
  *
  * @param repoPath - The repository.
  * @param packageJsonPath - Path relative to the repository.
- * @returns 'missing' if the file does not exist (the package was deleted, or
- * the directory is not a package), 'private' if it has `"private": true`,
- * otherwise 'public' (also if it can't be read or parsed).
+ * @returns 'missing' if the file does not exist, 'private' if it has
+ * `"private": true`, otherwise 'public' (also if it can't be read or parsed).
  */
 async function getPackageVisibility(
   repoPath: string,
@@ -280,11 +301,22 @@ async function getChangedPackages(
     const packageDir = path.join(packageInfo.base, packageInfo.package);
     let visibility = visibilityCache.get(packageDir);
     if (visibility === undefined) {
-      visibility = await getPackageVisibility(repoPath, path.join(packageDir, 'package.json'));
-      visibilityCache.set(packageDir, visibility);
+      const packageJsonPath = path.join(packageDir, 'package.json');
+      visibility = await getPackageVisibility(repoPath, packageJsonPath);
       if (visibility === 'missing') {
-        console.log(`Skipping ${packageDir}: it has no package.json (deleted, or not a package)`);
+        // Only a package deleted by this pull request is skipped. Otherwise
+        // the directory was never a package: getPackageInfo maps a file to
+        // the first segment after the wildcard's prefix, which is the package
+        // directory only for `<root>/*` patterns (`packages/*/*` maps
+        // packages/group/foo/src/x.ts to packages/group).
+        if (!isDeletedSinceBase(repoPath, packageJsonPath, baseRef)) {
+          throw new Error(
+            `${file} maps to ${packageDir}, which has no package.json at the pull request head or the merge base. Only workspace patterns of the form <root>/* are supported.`,
+          );
+        }
+        console.log(`Skipping ${packageDir}: its package.json was deleted`);
       }
+      visibilityCache.set(packageDir, visibility);
     }
     if (visibility !== 'public') {
       continue;

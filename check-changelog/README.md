@@ -47,15 +47,17 @@ The repository is checked out at `head-ref` into `target-repo/` and compared wit
 of `origin/<base-branch>`.
 
 **Monorepo** (root `package.json` has a `workspaces` array): each changed file is mapped to a
-package through the workspace patterns that contain `*`. Ignored: files under
-`.github/workflows/`, files outside any package, private packages, packages with no
-`package.json` at the pull request head (deleted packages), `*.test.*` and `*.spec.*` files,
-`__tests__/` and `/docs/` paths, and `CHANGELOG.md` files. A change to a package's own
-`package.json` (not a nested one) is ignored if only its `version` changed, only its
-`devDependencies` changed (with or without a version change), or the version went down (a
-revert). If its version went up along with other changes, the package's changelog section for
-the new version is checked instead of `Unreleased`; that section must exist. Every changed
-package is checked and every failure reported.
+package through the workspace patterns that contain `*`: the package directory is the prefix
+before the `*` plus the next path segment, so only patterns of the form `<root>/*` are
+supported. A file that maps to a directory with no `package.json` at either the pull request
+head or the merge base (as with a `packages/*/*` pattern) fails the check. Ignored: files under
+`.github/workflows/`, files outside any package, private packages, packages whose `package.json`
+the pull request deletes, `*.test.*` and `*.spec.*` files, `__tests__/` and `/docs/` paths, and
+`CHANGELOG.md` files. A change to a package's own `package.json` (not a nested one) is ignored
+if only its `version` changed, only its `devDependencies` changed (with or without a version
+change), or the version went down (a revert). If its version went up along with other changes,
+the package's changelog section for the new version is checked instead of `Unreleased`; that
+section must exist. Every changed package is checked and every failure reported.
 
 **Single package** (no `workspaces`): the root `CHANGELOG.md`'s `Unreleased` section must link
 the pull request.
@@ -81,8 +83,11 @@ added) starting with `}` after it, and only the first `"devDependencies":` is co
 - The end of the `devDependencies` block is found on removed and added lines too. Upstream only
   matched unchanged lines, so a diff that changed the block's closing brace (for example, by
   adding a field after it) counted every later change as a `devDependencies` change.
-- A package with no `package.json` at the pull request head (a deleted package) is skipped.
-  Upstream treated it as public and failed with `CHANGELOG.md not found`.
+- A package whose `package.json` the pull request deletes is skipped. Upstream treated it as
+  public and failed with `CHANGELOG.md not found`. A directory with no `package.json` at the
+  merge base either (for example, `packages/group` under a `packages/*/*` pattern) fails with an
+  error naming it and saying that only `<root>/*` patterns are supported, where upstream failed
+  with `CHANGELOG.md not found`.
 - Only the package's own `package.json` gets the `package.json` analysis. Upstream applied it to
   any file whose name ends in `package.json`, such as `schema-package.json` or a test fixture's
   `package.json`, so a version-only change to one of those was skipped.
