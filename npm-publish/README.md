@@ -83,7 +83,9 @@ fails the action before anything else runs.
    `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
    `https://registry.npmjs.org`, and delete `prepublish`, `prepublishOnly`, `prepack` and `postpack`
    scripts from every workspace, private ones included.
-2. **Publish** (`scripts/main.sh`, `publish.sh`): require Yarn ≥ 4.16. Find the public workspaces
+2. **Find the release pull request**: log the pull request that merged the commit, in a step of
+   its own, so that the Publish step doesn't hold the job's `GITHUB_TOKEN`.
+3. **Publish** (`scripts/main.sh`, `publish.sh`): require Yarn ≥ 4.16. Find the public workspaces
    whose `name@version` is not on npm (skipping `0.0.0`; in a single-package repository, the root
    unless it's private), then for each one, in the order `yarn workspaces list` prints them, run
    `scripts/publish.sh` in its directory, stopping at the first failure:
@@ -93,7 +95,7 @@ fails the action before anything else runs.
    - on npm: with OIDC, `yarn npm publish --tag <tag> --staged` (plus `--provenance` for a public
      repository); without, pack (or fail if `dry-run: false`). The token is never used here.
    An npm lookup error other than "not found" fails the action.
-3. **Dry run**: tarballs are written to `$RUNNER_TEMP/npm-publish-packages`. Log each tarball's
+4. **Dry run**: tarballs are written to `$RUNNER_TEMP/npm-publish-packages`. Log each tarball's
    SHA-1 and integrity to the step summary, write a `pkdiff` report against `<name>@latest`, and
    upload the tarballs and reports as the
    `npm-publish-dry-run-<sha>` artifact.
@@ -126,6 +128,8 @@ fails the action before anything else runs.
   any URL as the Yarn to download and run.
 - The action's steps set `BASH_ENV`, `ENV` and `NODE_OPTIONS` to empty values, so that an earlier
   step can't make them run code through `$GITHUB_ENV`.
+- The release pull request is looked up in its own step, so `GH_TOKEN` is not in the Publish
+  step's environment.
 - The generated Yarn configuration is passed to the action's own steps only. Upstream writes
   `YARN_RC_FILENAME` to `$GITHUB_ENV`, so every later Yarn command in the caller's job uses it too.
 

@@ -61,6 +61,22 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/sanitize.sh"'
 
+    # In its own step, so that GH_TOKEN is not in the Publish step's
+    # environment.
+    - name: Find the release pull request
+      shell: bash
+      env:
+        BASH_ENV: ''
+        ENV: ''
+        NODE_OPTIONS: ''
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        pr_url="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+          --jq '.[0].html_url // empty' 2>/dev/null || true)"
+        if [[ "$pr_url" =~ ^https://[A-Za-z0-9./_-]+$ ]]; then
+          echo "Releasing via pull request: $pr_url"
+        fi
+
     - name: Publish
       id: publish
       shell: bash
@@ -74,7 +90,6 @@ runs:
         PUBLISH_NPM_TAG: ${{ inputs.npm-tag }}
         DRY_RUN: ${{ inputs.dry-run }}
         REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
-        GH_TOKEN: ${{ github.token }}
         PACK_DIR: ${{ runner.temp }}/npm-publish-packages
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/main.sh"'

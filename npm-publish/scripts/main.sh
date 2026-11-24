@@ -5,9 +5,8 @@
 # npm yet. Run after sanitize.sh.
 #
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
-# REPOSITORY_VISIBILITY, GH_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, PACK_DIR,
-# YARN_IGNORE_PATH, and YARN_RC_FILENAME (the configuration file written by
-# sanitize.sh).
+# REPOSITORY_VISIBILITY, PACK_DIR, YARN_IGNORE_PATH, and YARN_RC_FILENAME (the
+# configuration file written by sanitize.sh).
 #
 # Outputs (to $GITHUB_OUTPUT): dry-run=true if any package was packed rather
 # than published.
@@ -46,14 +45,6 @@ fi
 if [[ -z "${PUBLISH_NPM_TAG:-}" ]]; then
   echo "::error::'npm-tag' not set."
   exit 1
-fi
-
-if [[ -n "${GITHUB_SHA:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
-  pr_url="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-    --jq '.[0].html_url // empty' 2>/dev/null || true)"
-  if [[ -n "$pr_url" ]]; then
-    echo "Releasing via pull request: $pr_url"
-  fi
 fi
 
 publish_monorepo() {
