@@ -112,6 +112,22 @@ export function getPackageInfo(filePath: string, workspacePatterns: string[]): P
 function getChangedFiles(repoPath: string, baseRef: string): string[] {
   try {
     git(repoPath, ['fetch', 'origin', baseRef]);
+  } catch (error) {
+    // The checkout does not persist credentials, so this fetch fails for a
+    // private repository. The checkout fetched all branches, so origin/<base>
+    // is usually present already.
+    try {
+      git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${baseRef}`]);
+      console.warn(
+        `::warning::Could not fetch ${baseRef}; using origin/${baseRef} from the checkout. ${errorMessage(error)}`,
+      );
+    } catch {
+      logError(`Failed to get changed files: ${errorMessage(error)}`);
+      throw error;
+    }
+  }
+
+  try {
     return git(repoPath, ['diff', '--name-only', `origin/${baseRef}...HEAD`])
       .split('\n')
       .filter(Boolean);
