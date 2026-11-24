@@ -1,0 +1,8 @@
+{
+  "name": "allow-scripts-marker",
+  "version": "1.0.0",
+  "description": "Test fixture: its allowed install script records that `yarn allow-scripts` ran.",
+  "scripts": {
+    "postinstall": "node -e \"require('fs').appendFileSync('../../.allow-scripts-ran', 'ran\\n')\""
+  }
+}

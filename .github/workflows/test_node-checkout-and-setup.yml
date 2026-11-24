@@ -1,349 +1,638 @@
-name: Build, Lint, and Test
+name: Test node-checkout-and-setup
 
 on:
-  workflow_call:
+  push:
+    paths:
+      - 'node-checkout-and-setup/**'
+      - '.github/workflows/test_node-checkout-and-setup.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The fixture published at the root of a branch, for the tests that let the
+  # action download metadata and check out the repository itself. Regenerate
+  # with node-checkout-and-setup/test/publish-fixture.sh after changing the
+  # fixture; the fixture-branch-up-to-date job fails until then.
+  FIXTURE_BRANCH: test-fixtures/node-checkout-and-setup
 
 jobs:
-  prepare:
-    name: Prepare
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node-version: [22.x]
-    needs:
-      - test-high-risk-without-prepare
-      - test-low-risk-without-prepare
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: false
-          cache-node-modules: true
-
-  lint:
-    name: Lint
-    needs: prepare
+  # ---------------------------------------------------------------------------
+  # Fixture branch matches the fixture directory
+  # ---------------------------------------------------------------------------
+  fixture-branch-up-to-date:
+    name: Fixture branch is up to date
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22.x]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          is-high-risk-environment: false
-          node-version: ${{ matrix.node-version }}
-      - run: yarn lint
-      - name: Validate RC changelog
-        if: ${{ startsWith(github.head_ref, 'release/') }}
-        run: yarn lint:changelog --rc
-      - name: Validate changelog
-        if: ${{ !startsWith(github.head_ref, 'release/') }}
-        run: yarn lint:changelog
-      - name: Require clean working directory
-        shell: bash
+          persist-credentials: false
+      - name: Compare fixture branch with node-checkout-and-setup/test-fixture
         run: |
-          if ! git diff --exit-code; then
-            echo "Working tree dirty at end of job"
+          git fetch --depth 1 origin "$FIXTURE_BRANCH"
+          if ! git diff --exit-code --stat FETCH_HEAD HEAD:node-checkout-and-setup/test-fixture; then
+            echo "::error::$FIXTURE_BRANCH differs from node-checkout-and-setup/test-fixture. Run node-checkout-and-setup/test/publish-fixture.sh."
             exit 1
           fi
 
-  test-high-risk-after-prepare:
-    name: Test high-risk after prepare
-    runs-on: ${{ matrix.os }}
-    needs: prepare
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: true
-
-      - name: Ensure node_modules cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit }}
-        run: exit 1
-
-      - name: Ensure .yarn cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-low-risk-after-prepare:
-    name: Test low-risk after prepare
+  # ---------------------------------------------------------------------------
+  # Script tests
+  # ---------------------------------------------------------------------------
+  scripts:
+    name: Scripts
     runs-on: ubuntu-latest
-    needs: prepare
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+      - name: retry.sh succeeds, retries and gives up after 5 attempts
+        run: |
+          scripts=node-checkout-and-setup/scripts
+          "$scripts/retry.sh" true
+          "$scripts/retry.sh" test 'a b' = 'a b'
+
+          counter="$(mktemp)"
+          # The bash -c scripts are single-quoted on purpose: $1 is the counter file.
+          # shellcheck disable=SC2016
+          # Fails twice, then succeeds.
+          "$scripts/retry.sh" bash -c 'echo x >> "$1"; [[ $(wc -l < "$1") -ge 3 ]]' _ "$counter"
+          [[ "$(wc -l < "$counter")" -eq 3 ]]
+
+          : > "$counter"
+          # shellcheck disable=SC2016
+          if "$scripts/retry.sh" bash -c 'echo x >> "$1"; false' _ "$counter"; then
+            echo "::error::retry.sh succeeded for a failing command"
+            exit 1
+          fi
+          [[ "$(wc -l < "$counter")" -eq 5 ]]
+
+      - name: compute-cache-paths.sh
+        env:
+          FIXTURE: node-checkout-and-setup/test-fixture
+        run: |
+          check() {
+            local expected="$1"
+            export GITHUB_OUTPUT
+            GITHUB_OUTPUT="$(mktemp)"
+            node-checkout-and-setup/scripts/compute-cache-paths.sh
+            actual="$(sed '1d;$d' "$GITHUB_OUTPUT")"
+            if [[ "$actual" != "$expected" ]]; then
+              printf '::error::Expected:\n%s\nGot:\n%s\n' "$expected" "$actual"
+              exit 1
+            fi
+          }
+          tmp="$(mktemp -d)"
+
+          PACKAGE_JSON_FILE="$FIXTURE/package.json" check $'.yarn/install-state.gz\nnode_modules\npackages/*/node_modules'
+          PACKAGE_JSON_FILE="" check $'.yarn/install-state.gz\n**/node_modules'
+
+          echo '{"workspaces":{"packages":["a/*","b","a/*"]}}' > "$tmp/object.json"
+          PACKAGE_JSON_FILE="$tmp/object.json" check $'.yarn/install-state.gz\nnode_modules\na/*/node_modules\nb/node_modules'
+
+          echo '{"workspaces":"pkgs/*"}' > "$tmp/string.json"
+          PACKAGE_JSON_FILE="$tmp/string.json" check $'.yarn/install-state.gz\nnode_modules\npkgs/*/node_modules'
+
+      - name: download-metadata.sh downloads from public and private sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_AND_REPO: ${{ github.repository }}
+          FIXTURE: ${{ github.workspace }}/node-checkout-and-setup/test-fixture
+        run: |
+          for visibility in public private; do
+            echo "::group::$visibility"
+            dir="$(mktemp -d)"
+            cd "$dir"
+            export GITHUB_OUTPUT="$dir.out"
+            IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION='' \
+              COMMIT_HASH="$FIXTURE_BRANCH" REPO_VISIBILITY="$visibility" METADATA_DIR="$dir.meta" \
+              "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
+            cat "$GITHUB_OUTPUT"
+            grep -qx "nvmrc-path=$dir.meta/.nvmrc" "$GITHUB_OUTPUT"
+            grep -qx "yarn-lock-available=true" "$GITHUB_OUTPUT"
+            grep -qx "package-json-path=$dir.meta/package.json" "$GITHUB_OUTPUT"
+            cmp "$dir.meta/.nvmrc" "$FIXTURE/.nvmrc"
+            cmp "$dir.meta/package.json" "$FIXTURE/package.json"
+            # yarn.lock goes into the workspace, where hashFiles can see it.
+            cmp yarn.lock "$FIXTURE/yarn.lock"
+            echo "::endgroup::"
+          done
+
+      - name: download-metadata.sh fails without .nvmrc and node-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_AND_REPO: ${{ github.repository }}
+          # This repository's own root has no .nvmrc, yarn.lock or package.json.
+          COMMIT_HASH: ${{ github.sha }}
+        run: |
+          for visibility in public private; do
+            dir="$(mktemp -d)"
+            cd "$dir"
+            export GITHUB_OUTPUT="$dir.out"
+            if IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION='' \
+              REPO_VISIBILITY="$visibility" METADATA_DIR="$dir.meta" \
+              "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"; then
+              echo "::error::Expected failure without .nvmrc ($visibility)"
+              exit 1
+            fi
+            [[ ! -e "$dir.meta/.nvmrc" ]]
+          done
+
+      - name: download-metadata.sh only warns without yarn.lock and package.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_AND_REPO: ${{ github.repository }}
+          COMMIT_HASH: ${{ github.sha }}
+        run: |
+          for visibility in public private; do
+            dir="$(mktemp -d)"
+            cd "$dir"
+            export GITHUB_OUTPUT="$dir.out"
+            IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION=24.x \
+              REPO_VISIBILITY="$visibility" METADATA_DIR="$dir.meta" \
+              "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
+            cat "$GITHUB_OUTPUT"
+            grep -qx "nvmrc-path=" "$GITHUB_OUTPUT"
+            grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
+            grep -qx "package-json-path=" "$GITHUB_OUTPUT"
+            [[ ! -e yarn.lock && ! -e "$dir.meta/package.json" ]]
+          done
+
+      - name: download-metadata.sh downloads nothing in high-risk mode with node-version
+        env:
+          OWNER_AND_REPO: ${{ github.repository }}
+        run: |
+          dir="$(mktemp -d)"
+          cd "$dir"
+          export GITHUB_OUTPUT="$dir.out"
+          # An unreachable source makes any download attempt fail.
+          IS_HIGH_RISK_ENVIRONMENT=true CACHE_NODE_MODULES=false SKIP_INSTALL=false INPUT_NODE_VERSION=24.x \
+            COMMIT_HASH=does-not-exist REPO_VISIBILITY=public METADATA_DIR="$dir.meta" \
+            "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
+          grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
+          grep -qx "package-json-path=" "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Input validation
+  # ---------------------------------------------------------------------------
+  invalid-inputs:
+    name: Invalid inputs (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: empty is-high-risk-environment
+            high-risk: ''
+            cache: 'false'
+            skip-install: 'false'
+            persist-credentials: 'false'
+          - name: is-high-risk-environment yes
+            high-risk: 'yes'
+            cache: 'false'
+            skip-install: 'false'
+            persist-credentials: 'false'
+          - name: high-risk with cache-node-modules
+            high-risk: 'true'
+            cache: 'true'
+            skip-install: 'false'
+            persist-credentials: 'false'
+          - name: cache-node-modules yes
+            high-risk: 'false'
+            cache: 'yes'
+            skip-install: 'false'
+            persist-credentials: 'false'
+          - name: skip-install yes
+            high-risk: 'false'
+            cache: 'false'
+            skip-install: 'yes'
+            persist-credentials: 'false'
+          - name: empty persist-credentials
+            high-risk: 'false'
+            cache: 'false'
+            skip-install: 'false'
+            persist-credentials: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      # A workspace the action would set up without error, so a failure comes
+      # from input validation.
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh
+      - name: Run action
+        id: action
+        continue-on-error: true
+        uses: ./actions-repo/node-checkout-and-setup
+        with:
+          is-high-risk-environment: ${{ matrix.high-risk }}
+          cache-node-modules: ${{ matrix.cache }}
+          skip-install: ${{ matrix.skip-install }}
+          persist-credentials: ${{ matrix.persist-credentials }}
+          node-version: 24.x
+      - name: Assert the action failed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          if [[ "$OUTCOME" != "failure" ]]; then
+            echo "::error::Expected failure, got $OUTCOME"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Node.js versions (fixture copied into a pre-initialized workspace)
+  # ---------------------------------------------------------------------------
+  node-versions:
+    name: Node.js version (${{ matrix.node-version || '.nvmrc' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node-version: 22.x
+            expected-prefix: v22.
+          - node-version: 24.x
+            expected-prefix: v24.
+          - node-version: lts/*
+            expected-prefix: lts
+          # Node.js 25 and later don't ship Corepack.
+          - node-version: 26.x
+            expected-prefix: v26.
+          - node-version: v24.13.0
+            expected-prefix: v24.13.
+          - node-version: '24'
+            expected-prefix: v24.
+          - node-version: ''
+            expected-prefix: v24. # The fixture's .nvmrc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
         with:
           is-high-risk-environment: false
+          node-version: ${{ matrix.node-version }}
+      - name: Assert Node.js version
+        env:
+          EXPECTED_PREFIX: ${{ matrix.expected-prefix }}
+          OUTPUT_VERSION: ${{ steps.action.outputs.node-version }}
+        run: |
+          actual="$(node --version)"
+          echo "node --version: $actual; output: $OUTPUT_VERSION"
+          if [[ "$EXPECTED_PREFIX" == "lts" ]]; then
+            expected="$(curl -fsS --retry 3 https://nodejs.org/download/release/index.json \
+              | jq -r '[.[] | select(.lts != false)][0].version | split(".")[0] + "."')"
+          else
+            expected="$EXPECTED_PREFIX"
+          fi
+          if [[ "$actual" != "$expected"* || "$actual" != "$OUTPUT_VERSION" ]]; then
+            echo "::error::Expected $expected*, got $actual (output $OUTPUT_VERSION)"
+            exit 1
+          fi
+      - name: Assert dependencies were installed
+        run: |
+          test -d node_modules/@lavamoat/allow-scripts
+          test -f .allow-scripts-ran
+      - name: Assert Yarn comes from the selected Node.js's Corepack
+        run: |
+          node_bin="$(dirname "$(command -v node)")"
+          echo "node: $node_bin; yarn: $(command -v yarn)"
+          [[ "$(command -v yarn)" == "$node_bin/yarn" ]]
 
-      - name: Ensure `node_modules` cache was used
-        if: ${{ !steps.checkout-and-setup.outputs.node-modules-cache-hit }}
-        run: exit 1
-
-      - name: Ensure `.yarn` cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-high-risk-without-prepare:
-    name: Test high-risk without prepare
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+  # ---------------------------------------------------------------------------
+  # node_modules cache, with a cache key unique to this run
+  # ---------------------------------------------------------------------------
+  cache-prepare:
+    name: Cache - prepare saves on miss
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          is-high-risk-environment: true
-
-      - name: Ensure `node_modules` cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit }}
-        run: exit 1
-
-      - name: Ensure `.yarn` cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-low-risk-without-prepare:
-    name: Test low-risk without prepare
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh --unique-lockfile
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
         with:
           is-high-risk-environment: false
+          cache-node-modules: true
+          node-version: 24.x
+      - name: Assert cache miss, install and save
+        env:
+          CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
+          SKIPPED_SETUP: ${{ steps.action.outputs.skipped-setup }}
+        run: |
+          echo "node-modules-cache-hit=$CACHE_HIT skipped-setup=$SKIPPED_SETUP"
+          # A re-run reuses the run ID, and so the first attempt's cache entry.
+          if [[ "$GITHUB_RUN_ATTEMPT" == "1" ]]; then
+            [[ "$CACHE_HIT" == "false" && "$SKIPPED_SETUP" == "false" ]]
+          fi
+          if [[ "$SKIPPED_SETUP" == "false" ]]; then
+            test -d node_modules/@lavamoat/allow-scripts
+            test -f .allow-scripts-ran
+          fi
 
-      - name: Ensure node_modules or yarn cache was used
-        if: ${{ !steps.checkout-and-setup.outputs.node-modules-cache-hit && !steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-prepare-force-setup:
-    name: Test prepare force setup
+  cache-skip-setup:
+    name: Cache - prepare again skips setup
+    needs: cache-prepare
     runs-on: ubuntu-latest
-    needs: prepare
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh --unique-lockfile
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
+        with:
+          is-high-risk-environment: false
+          cache-node-modules: true
+          node-version: 24.x
+      - name: Assert setup was skipped
+        env:
+          SKIPPED_SETUP: ${{ steps.action.outputs.skipped-setup }}
+          NODE_VERSION: ${{ steps.action.outputs.node-version }}
+        run: |
+          [[ "$SKIPPED_SETUP" == "true" ]]
+          [[ -z "$NODE_VERSION" ]]
+          test ! -e node_modules
+          test ! -e .allow-scripts-ran
 
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+  cache-force-setup:
+    name: Cache - force-setup (skip-allow-scripts ${{ matrix.skip-allow-scripts }})
+    needs: cache-prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        skip-allow-scripts: ['false', 'true']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh --unique-lockfile
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
         with:
           is-high-risk-environment: false
           cache-node-modules: true
           force-setup: true
+          skip-allow-scripts: ${{ matrix.skip-allow-scripts }}
+          node-version: 24.x
+      - name: Assert restore from cache without install
+        env:
+          CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
+          SKIPPED_SETUP: ${{ steps.action.outputs.skipped-setup }}
+          NODE_VERSION: ${{ steps.action.outputs.node-version }}
+          SKIP_ALLOW_SCRIPTS: ${{ matrix.skip-allow-scripts }}
+        run: |
+          echo "node-modules-cache-hit=$CACHE_HIT skipped-setup=$SKIPPED_SETUP"
+          # A cache hit means the install step's condition was false.
+          [[ "$CACHE_HIT" == "true" && "$SKIPPED_SETUP" == "false" && -n "$NODE_VERSION" ]]
+          test -d node_modules/@lavamoat/allow-scripts
+          if [[ "$SKIP_ALLOW_SCRIPTS" == "true" ]]; then
+            test ! -e .allow-scripts-ran
+          else
+            test -f .allow-scripts-ran
+          fi
 
-      - name: Ensure setup was not skipped
-        if: ${{ steps.checkout-and-setup.outputs.skipped-setup }}
-        run: exit 1
-
-  test-high-risk-cache-write-only:
-    name: Test high-risk with cache (write-only mode)
+  cache-restore:
+    name: Cache - low-risk job restores
+    needs: cache-prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh --unique-lockfile
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
+        with:
+          is-high-risk-environment: false
+          node-version: 24.x
+      - name: Assert restore from cache without install
+        env:
+          CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
+        run: |
+          [[ "$CACHE_HIT" == "true" ]]
+          test -d node_modules/@lavamoat/allow-scripts
+          test -f .allow-scripts-ran
 
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+  cache-high-risk:
+    name: Cache - high-risk job ignores the cache
+    needs: cache-prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh --unique-lockfile
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
         with:
           is-high-risk-environment: true
-          cache-node-modules: true
-
-      - name: Ensure node_modules cache was not read
-        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit }}
-        run: exit 1
-
-      - name: Ensure .yarn cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-low-risk-reads-high-risk-cache:
-    name: Test low-risk reads high-risk cache
-    runs-on: ubuntu-latest
-    needs: test-high-risk-cache-write-only
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: false
-
-      - name: Ensure node_modules cache was used
-        if: ${{ !steps.checkout-and-setup.outputs.node-modules-cache-hit }}
-        run: exit 1
-
-      - name: Ensure .yarn cache was not used
-        if: ${{ steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-high-risk-string:
-    name: Test high-risk string
-    runs-on: ubuntu-latest
-    needs: prepare
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: 'true'
-
-  test-low-risk-string:
-    name: Test low-risk string
-    runs-on: ubuntu-latest
-    needs: prepare
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: 'false'
-
-  test-no-input:
-    name: Test no input
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        continue-on-error: true
-        uses: ./
-
-      - name: Ensure previous step failed
-        if: ${{ steps.checkout-and-setup.outcome == 'success' }}
-        run: exit 1
-
-  test-bad-input-string:
-    name: Test bad input string
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        continue-on-error: true
-        uses: ./
-        with:
-          is-high-risk-environment: 'foo'
-
-      - name: Ensure previous step failed
-        if: ${{ steps.checkout-and-setup.outcome == 'success' }}
-        run: exit 1
-
-  test-bad-input-number:
-    name: Test bad input number
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        continue-on-error: true
-        uses: ./
-        with:
-          is-high-risk-environment: 1
-
-      - name: Ensure previous step failed
-        if: ${{ steps.checkout-and-setup.outcome == 'success' }}
-        run: exit 1
-
-  test-custom-node-version:
-    name: Test custom Node.js version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: false
-          node-version: 20.x
-
-      - name: Ensure correct Node.js version
-        if: ${{ !contains(steps.checkout-and-setup.outputs.node-version, '20.') }}
-        run: node --version && exit 1
-
-  test-skip-install:
-    name: Test skip-install
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
-        with:
-          is-high-risk-environment: false
-          skip-install: true
-
-      - name: Ensure Node.js was set up
-        if: ${{ !steps.checkout-and-setup.outputs.node-version }}
-        run: exit 1
-
-      - name: Ensure dependencies were not installed
+          node-version: 24.x
+      # cache-prepare saved an entry for this job's key (cache-restore shows a
+      # low-risk job hits it), so a miss here means the cache was not consulted.
+      - name: Assert the cache was not used and dependencies were installed
+        env:
+          CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
+          SKIPPED_SETUP: ${{ steps.action.outputs.skipped-setup }}
         run: |
-          if [ -d node_modules ]; then
-            echo "node_modules should not exist when skip-install is true"
+          [[ "$CACHE_HIT" == "false" && "$SKIPPED_SETUP" == "false" ]]
+          test -d node_modules/@lavamoat/allow-scripts
+          test -f .allow-scripts-ran
+
+  # ---------------------------------------------------------------------------
+  # skip-install
+  # ---------------------------------------------------------------------------
+  skip-install:
+    name: skip-install (high-risk ${{ matrix.high-risk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        high-risk: ['false', 'true']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        run: actions-repo/node-checkout-and-setup/test/prepare-workspace.sh
+      - name: Run action
+        id: action
+        uses: ./actions-repo/node-checkout-and-setup
+        with:
+          is-high-risk-environment: ${{ matrix.high-risk }}
+          skip-install: true
+      - name: Assert Node.js set up and nothing installed
+        env:
+          NODE_VERSION: ${{ steps.action.outputs.node-version }}
+          CACHE_HIT: ${{ steps.action.outputs.node-modules-cache-hit }}
+        run: |
+          [[ -n "$NODE_VERSION" && "$CACHE_HIT" == "false" ]]
+          test ! -e node_modules
+          test ! -e .allow-scripts-ran
+
+  # ---------------------------------------------------------------------------
+  # Checkout by the action
+  # ---------------------------------------------------------------------------
+  # actions/checkout empties a workspace that is not a git repository, which
+  # would delete a local action under test. So this job checks out this
+  # repository, removes .git, and lets the action check out the same commit:
+  # the action's files are restored at the same path.
+  checkout:
+    name: Checkout (high-risk ${{ matrix.high-risk }}, persist-credentials ${{ matrix.persist-credentials || 'default' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - high-risk: 'false'
+            persist-credentials: ''
+          - high-risk: 'true'
+            persist-credentials: 'true'
+          - high-risk: 'true'
+            persist-credentials: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Remove .git
+        run: rm -rf .git
+      - name: Run action
+        id: action
+        if: ${{ matrix.persist-credentials != '' }}
+        uses: ./node-checkout-and-setup
+        with:
+          is-high-risk-environment: ${{ matrix.high-risk }}
+          node-version: 24.x
+          # This repository's root is not a Yarn workspace.
+          skip-install: true
+          ref: ${{ github.sha }}
+          persist-credentials: ${{ matrix.persist-credentials }}
+      # Leaves persist-credentials unset, to test the action's default.
+      - name: Run action (default persist-credentials)
+        id: action-default
+        if: ${{ matrix.persist-credentials == '' }}
+        uses: ./node-checkout-and-setup
+        with:
+          is-high-risk-environment: ${{ matrix.high-risk }}
+          node-version: 24.x
+          skip-install: true
+          ref: ${{ github.sha }}
+      - name: Assert checked out with fetch-depth 1 and the expected credentials
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          # The action's default is false.
+          EXPECTED_CREDENTIALS: ${{ matrix.persist-credentials || 'false' }}
+          NODE_VERSION: ${{ steps.action.outputs.node-version || steps.action-default.outputs.node-version }}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]]
+          [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]
+          [[ "$NODE_VERSION" == v24.* ]]
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            git status
+            exit 1
+          fi
+          if git config --get-regexp '^http\..*\.extraheader$' >/dev/null; then
+            has_credentials=true
+          else
+            has_credentials=false
+          fi
+          if [[ "$has_credentials" != "$EXPECTED_CREDENTIALS" ]]; then
+            echo "::error::Expected persisted credentials: $EXPECTED_CREDENTIALS, got $has_credentials"
             exit 1
           fi
 
-      - name: Ensure caches were not used
-        if: ${{ steps.checkout-and-setup.outputs.node-modules-cache-hit || steps.checkout-and-setup.outputs.yarn-cache-hit }}
-        run: exit 1
-
-  test-do-not-checkout-twice:
-    name: Test do not checkout twice
+  # The action downloads yarn.lock into the workspace root and relies on
+  # actions/checkout overwriting it. This runs the same two steps the action
+  # does against the fixture branch and checks that the tree is clean after.
+  checkout-over-downloaded-yarn-lock:
+    name: Checkout over a downloaded yarn.lock leaves a clean tree
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: fe105dad148ae6383a5c7ec77cbe13d67ec98190 # The commit hash when the action was first created
+          path: actions-repo
+          persist-credentials: false
+      - name: Move this repository out of the workspace
+        run: mv actions-repo "$RUNNER_TEMP/actions-repo"
+      - name: Download metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_AND_REPO: ${{ github.repository }}
+          REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          export GITHUB_OUTPUT="$RUNNER_TEMP/download.out"
+          IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION='' \
+            COMMIT_HASH="$FIXTURE_BRANCH" METADATA_DIR="$RUNNER_TEMP/metadata" \
+            "$RUNNER_TEMP/actions-repo/node-checkout-and-setup/scripts/download-metadata.sh"
+          grep -qx "yarn-lock-available=true" "$GITHUB_OUTPUT"
+          test -s yarn.lock
+      # Same inputs as the action's checkout step.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          ref: ${{ env.FIXTURE_BRANCH }}
+          persist-credentials: false
+      - name: Assert clean tree
+        run: |
+          status="$(git status --porcelain --untracked-files=all)"
+          if [[ -n "$status" ]]; then
+            echo "::error::Working tree is not clean:"
+            echo "$status"
+            exit 1
+          fi
 
-      - name: Store initial head SHA
-        run: echo "INITIAL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      - name: Checkout and setup environment
-        id: checkout-and-setup
-        uses: ./
+  pre-checked-out:
+    name: Pre-checked-out workspace is not checked out again
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.FIXTURE_BRANCH }}
+          path: fixture
+          persist-credentials: false
+      - name: Move the fixture checkout to the workspace root
+        run: |
+          shopt -s dotglob
+          mv fixture/* .
+          rmdir fixture
+          git rev-parse HEAD > "$RUNNER_TEMP/initial-head"
+      - name: Run action
+        uses: ./actions-repo/node-checkout-and-setup
         with:
           is-high-risk-environment: false
+          # A ref the action would check out if it ran actions/checkout.
           ref: main
-
-      - name: Store new head SHA
-        run: echo "NEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      - name: Make sure the Git HEAD did not change
-        if: ${{ env.NEW_SHA != env.INITIAL_SHA }}
-        run: exit 1
+      - name: Assert HEAD did not change
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$(cat "$RUNNER_TEMP/initial-head")" ]]
+          test -d node_modules/@lavamoat/allow-scripts
