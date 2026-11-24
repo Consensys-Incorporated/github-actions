@@ -1,102 +1,73 @@
-name: Check Changelog
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'check-changelog'
+description: >-
+  On a pull request, fail if a public workspace package has user-facing
+  changes but its CHANGELOG.md has no entry linking the pull request, unless
+  the pull request has the `no-changelog` label.
 
 inputs:
   base-branch:
-    description: 'The base branch to compare against'
+    description: 'The branch the pull request targets.'
     required: false
-    default: 'main'
+    default: main
   head-ref:
-    description: 'The head ref to check out'
+    description: 'The pull request head ref to check out.'
     required: true
   labels:
-    description: 'JSON string of PR labels'
+    description: 'The pull request labels, as JSON (`toJSON(github.event.pull_request.labels)`).'
     required: true
   pr-number:
-    description: 'The pull request number'
+    description: 'The pull request number.'
     required: true
   repo:
-    description: 'The repository to check'
+    description: 'The repository to check (`owner/name`).'
     required: true
-  github-tools-repository:
-    description: 'The GitHub repository containing the GitHub tools. Defaults to the GitHub tools action repositor, and usually does not need to be changed.'
-    required: false
-    default: ${{ github.action_repository }}
-  github-tools-ref:
-    description: 'The SHA of the action to use. Defaults to the current action ref, and usually does not need to be changed.'
-    required: false
-    default: ${{ github.action_ref }}
 
 runs:
   using: composite
   steps:
-    - name: Check PR Labels
+    - name: Check for no-changelog label
       id: label-check
+      shell: bash
       env:
         PR_LABELS: ${{ inputs.labels }}
       run: |
-        if echo "$PR_LABELS" | jq -e '.[] | select(.name == "no-changelog")' > /dev/null; then
+        if jq -e '.[] | select(.name == "no-changelog")' <<<"$PR_LABELS" >/dev/null; then
           echo "no-changelog label found, skipping changelog check."
-          echo "skip_check=true" >> "$GITHUB_OUTPUT"
+          echo "skip=true" >>"$GITHUB_OUTPUT"
         else
           echo "No no-changelog label found, proceeding with check."
-          echo "skip_check=false" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >>"$GITHUB_OUTPUT"
         fi
-      shell: bash
 
     - name: Check out target repository
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      uses: actions/checkout@v6
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         repository: ${{ inputs.repo }}
         ref: ${{ inputs.head-ref }}
         path: target-repo
         fetch-depth: 0
 
-    - name: Debug log
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      env:
-        ACTION_REPOSITORY: ${{ inputs.github-tools-repository }}
-        ACTION_REF: ${{ inputs.github-tools-ref }}
-      run: |
-        echo "ACTION_REPOSITORY: $ACTION_REPOSITORY"
-        echo "ACTION_REF: $ACTION_REF"
-      shell: bash
-
-    - name: Checkout GitHub tools repository
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      uses: actions/checkout@v6
-      with:
-        repository: ${{ inputs.github-tools-repository }}
-        ref: ${{ inputs.github-tools-ref }}
-        path: ./.github-tools
-
-    - name: Enable Corepack
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      run: corepack enable
-      shell: bash
-      working-directory: ./.github-tools
-
     - name: Set up Node.js
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      uses: actions/setup-node@v6
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
       with:
-        node-version-file: ./.github-tools/.nvmrc
-        cache-dependency-path: ./.github-tools/yarn.lock
-        cache: yarn
+        node-version: 24.x
+        package-manager-cache: false
 
-    - name: Install dependencies
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      run: yarn --immutable
+    - name: Install check dependencies
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
       shell: bash
-      working-directory: ./.github-tools
+      working-directory: ${{ github.action_path }}
+      run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
 
-    - name: Check Changelog
-      if: ${{ steps.label-check.outputs.skip_check != 'true' }}
-      id: changelog-check
+    - name: Check changelog
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
       shell: bash
-      working-directory: ./.github-tools
       env:
         BASE_BRANCH: ${{ inputs.base-branch }}
         PR_NUMBER: ${{ inputs.pr-number }}
-      run: |
-        yarn run changelog:check ../target-repo "$BASE_BRANCH" "$PR_NUMBER"
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "$ACTION_PATH/scripts/check-changelog.ts" target-repo "$BASE_BRANCH" "$PR_NUMBER"
