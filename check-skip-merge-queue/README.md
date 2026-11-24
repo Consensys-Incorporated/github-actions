@@ -4,7 +4,7 @@ In a `merge_group` run, reports whether the pull request is first in the merge q
 head commit already contains the base branch. In that case the merge group's tree is the one the pull
 request's own `pull_request` run already tested, and the caller can skip its expensive jobs.
 
-Ported from `MetaMask/github-tools/.github/actions/check-skip-merge-queue` v1 (MIT).
+Ported from `MetaMask/github-tools/.github/actions/check-skip-merge-queue` v1.
 
 ## Usage
 
