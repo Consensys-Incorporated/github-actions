@@ -181,23 +181,24 @@ runs:
 
     - name: Install dependencies
       if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
-      uses: MetaMask/action-retry-command@v1
-      with:
-        command: yarn --immutable
-        shell: bash
-        max-retries: 5
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/retry.sh" yarn --immutable'
 
     # The install above runs allow-scripts itself; after a cache restore it has
     # to run separately.
     - name: Run allow-scripts
       if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.restore-node-modules.outputs.cache-hit == 'true' && inputs.skip-allow-scripts != 'true' && inputs.skip-install != 'true' }}
-      uses: MetaMask/action-retry-command@v1
-      with:
-        command: |
-          if yarn bin allow-scripts &>/dev/null; then
-            yarn allow-scripts
-          fi
-        shell: bash
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        if yarn bin allow-scripts &>/dev/null; then
+          "$ACTION_PATH/scripts/retry.sh" yarn allow-scripts
+        else
+          echo 'allow-scripts is not installed; skipping.'
+        fi
 
     # In a high-risk environment the restore steps above are skipped, but the
     # cache is still saved (write-only mode).

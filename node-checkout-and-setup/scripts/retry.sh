@@ -1,50 +1,34 @@
-name: Retry command
-description: Retry a command up to a specified number of times.
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Usage: retry.sh <command> [args...]
+#
+# Runs the command up to 5 times, waiting 1, 2, 4 and 8 seconds between
+# attempts. The command is executed directly, not through a shell.
 
-inputs:
-  command:
-    description: The command to run.
-    required: true
-  shell:
-    description: The shell to run the command in.
-    required: false
-    default: bash
-  max-retries:
-    description: The maximum number of times to retry the command.
-    required: false
-    default: 3
+set -euo pipefail
 
-outputs:
-  success:
-    description: Whether the command succeeded.
-    value: ${{ steps.success.outputs.success }}
+readonly MAX_ATTEMPTS=5
 
-runs:
-  using: composite
-  steps:
-    - name: Retry command
-      run: |
-        command() {
-          "$SHELL" -c "$COMMAND"
-        }
+retry() {
+  local attempt delay
+  for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+    if "$@"; then
+      return 0
+    fi
+    if ((attempt < MAX_ATTEMPTS)); then
+      delay=$((2 ** (attempt - 1)))
+      echo "Attempt $attempt of $MAX_ATTEMPTS failed, retrying in $delay seconds..."
+      sleep "$delay"
+    fi
+  done
+  echo "::error::Command failed after $MAX_ATTEMPTS attempts."
+  return 1
+}
 
-        for i in $(seq 1 "$MAX_RETRIES"); do
-          if command; then
-            exit 0
-          fi
+if (($# == 0)); then
+  echo "::error::retry.sh: no command given."
+  exit 1
+fi
 
-          echo "Attempt $i failed, retrying in $((2 ** (i - 1))) seconds..."
-          sleep $((2 ** (i - 1)))
-        done
-        echo "::error::Command failed after $MAX_RETRIES attempts."
-        exit 1
-      shell: ${{ inputs.shell }}
-      env:
-        # The command is provided as environment variables to avoid issues with
-        # multi-line commands.
-        COMMAND: ${{ inputs.command }}
-        MAX_RETRIES: ${{ inputs.max-retries }}
-    - name: Set success output
-      id: success
-      run: echo "success=true" >> "$GITHUB_OUTPUT"
-      shell: bash
+retry "$@"
