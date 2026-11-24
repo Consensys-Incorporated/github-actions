@@ -50,11 +50,11 @@ of `origin/<base-branch>`.
 package through the workspace patterns that contain `*`. Ignored: files under
 `.github/workflows/`, files outside any package, private packages, packages with no
 `package.json` at the pull request head (deleted packages), `*.test.*` and `*.spec.*` files,
-`__tests__/` and `/docs/` paths, and `CHANGELOG.md` files. A changed `package.json` is
-ignored if only its `version` changed, only its `devDependencies` changed (with or without a
-version change), or the version went down (a revert). If its version went up along with other
-changes, the package's changelog section for the new version is checked instead of `Unreleased`;
-that section must exist. Every changed package is checked and every failure reported.
+`__tests__/` and `/docs/` paths, and `CHANGELOG.md` files. A change to a package's own
+`package.json` (not a nested one) is ignored if only its `version` changed, only its
+`devDependencies` changed (with or without a version change), or the version went down (a
+revert). If its version went up along with other changes, the package's changelog section for
+the new version is checked instead of `Unreleased`; that section must exist. Every changed package is checked and every failure reported.
 
 **Single package** (no `workspaces`): the root `CHANGELOG.md`'s `Unreleased` section must link
 the pull request.
@@ -82,6 +82,9 @@ added) starting with `}` after it, and only the first `"devDependencies":` is co
   adding a field after it) counted every later change as a `devDependencies` change.
 - A package with no `package.json` at the pull request head (a deleted package) is skipped.
   Upstream treated it as public and failed with `CHANGELOG.md not found`.
+- Only the package's own `package.json` gets the `package.json` analysis. Upstream applied it to
+  any file whose name ends in `package.json`, such as `schema-package.json` or a test fixture's
+  `package.json`, so a version-only change to one of those was skipped.
 
 ## Security
 

@@ -300,7 +300,9 @@ async function getChangedPackages(
     }
 
     let newVersion: string | undefined;
-    if (file.endsWith('package.json')) {
+    // Only the package's manifest, not other files ending in package.json
+    // (schema-package.json) or nested package.json files (test fixtures).
+    if (file === path.join(packageDir, 'package.json')) {
       const changes = analyzePackageJsonChanges(repoPath, file, baseRef);
       if (!changes.hasChanges) {
         continue;

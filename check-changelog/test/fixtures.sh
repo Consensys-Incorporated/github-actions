@@ -206,6 +206,28 @@ case_version_only() {
   expect pass "package.json version bump only" "only contains version changes"
 }
 
+# Only the package's own package.json gets the package.json analysis: a
+# version-only change to any other JSON file is a code change.
+# other_json_version_only <dir> <file>
+other_json_version_only() {
+  monorepo "$1"
+  mkdir -p "$(dirname "$2")"
+  jq -n '{version: "1.0.0"}' >"$2"
+  commit
+  publish_base
+  jq -n '{version: "1.1.0"}' >"$2"
+  commit
+  expect fail "version change in $2" "Changelog check failed for package packages/pub"
+}
+
+case_suffix_package_json_version_only() {
+  other_json_version_only "$WORK/suffix-package-json" packages/pub/schema-package.json
+}
+
+case_nested_package_json_version_only() {
+  other_json_version_only "$WORK/nested-package-json" packages/pub/src/fixture/package.json
+}
+
 case_dev_deps_only() {
   monorepo "$WORK/dev-deps-only"
   package_json pub 1.0.0 false ^1.0.0 ^2.0.0 >packages/pub/package.json
