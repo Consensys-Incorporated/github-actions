@@ -42,9 +42,10 @@ fi
 
 package_name="$(jq --raw-output .name package.json)"
 
-# Whether the package exists on npm at all. Run from /tmp so that Corepack
-# does not detect Yarn.
-published_version="$(cd /tmp && npm view "$package_name" --workspaces false --json 2>/dev/null | jq --raw-output '.version // empty' || echo "")"
+# Whether the package exists on npm at all. Any error other than "not found"
+# fails, so a registry outage can't send an existing package down the token
+# path.
+published_version="$("$script_path/npm-view.sh" "$package_name")"
 
 publish_cmd=()
 if [[ "$DRY_RUN" == "true" ]]; then

@@ -34,10 +34,12 @@ if [[ "$local_version" == "0.0.0" ]]; then
   exit 0
 fi
 
-# Check whether this exact version is already published. Note that we're
-# `cd`ing into /tmp before running `npm view` to avoid any issues with
-# Corepack detecting Yarn.
-if (cd /tmp && npm view "$name@$local_version" version --workspaces false --json >/dev/null 2>&1); then
+script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Fails, rather than reporting the package as unpublished, if npm can't be
+# reached.
+published="$("$script_path/npm-view.sh" "$name@$local_version")"
+if [[ -n "$published" ]]; then
   exit 0
 fi
 
