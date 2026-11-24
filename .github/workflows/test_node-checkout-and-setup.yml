@@ -120,21 +120,40 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: download-metadata.sh does not download yarn.lock into a checkout
+      # The fixture branch has all three files, so any download would succeed.
+      - name: download-metadata.sh downloads nothing into a checkout
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER_AND_REPO: ${{ github.repository }}
+          COMMIT_HASH: ${{ env.FIXTURE_BRANCH }}
         run: |
-          dir="$(mktemp -d)"
-          cd "$dir"
-          git init -q
-          export GITHUB_OUTPUT="$dir.out"
-          IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION=24.x \
-            COMMIT_HASH="$FIXTURE_BRANCH" REPO_VISIBILITY=public METADATA_DIR="$dir.meta" \
-            "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
-          cat "$GITHUB_OUTPUT"
-          grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
-          test ! -e yarn.lock
+          for visibility in public private; do
+            echo "::group::$visibility"
+            dir="$(mktemp -d)"
+            cd "$dir"
+            git init -q
+            export GITHUB_OUTPUT="$dir.out"
+
+            # Without node-version, a checkout must have its own .nvmrc.
+            if IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION='' \
+              REPO_VISIBILITY="$visibility" METADATA_DIR="$dir.meta" \
+              "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"; then
+              echo "::error::Expected failure without .nvmrc in a checkout ($visibility)"
+              exit 1
+            fi
+            [[ -z "$(ls -A "$dir.meta")" && ! -e yarn.lock ]]
+
+            : > "$GITHUB_OUTPUT"
+            IS_HIGH_RISK_ENVIRONMENT=false CACHE_NODE_MODULES=true SKIP_INSTALL=false INPUT_NODE_VERSION=24.x \
+              REPO_VISIBILITY="$visibility" METADATA_DIR="$dir.meta" \
+              "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
+            cat "$GITHUB_OUTPUT"
+            grep -qx "nvmrc-path=" "$GITHUB_OUTPUT"
+            grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
+            grep -qx "package-json-path=" "$GITHUB_OUTPUT"
+            [[ -z "$(ls -A "$dir.meta")" && ! -e yarn.lock ]]
+            echo "::endgroup::"
+          done
 
       - name: download-metadata.sh fails without .nvmrc and node-version
         env:

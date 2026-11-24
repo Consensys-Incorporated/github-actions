@@ -10,7 +10,11 @@ inputs:
       no Actions cache is read or written. `false` enables caching.
     required: true
   node-version:
-    description: 'Node.js version (e.g. `24.x`, `24`, `v24.13.0`, `lts/*`). Defaults to the contents of `.nvmrc`.'
+    description: >-
+      Node.js version (e.g. `24.x`, `24`, `v24.13.0`, `lts/*`). Defaults to
+      the contents of `.nvmrc`: the workspace's own if it is already a git
+      repository (the action fails if it has none), otherwise the one at
+      `ref`.
     required: false
     default: ''
   cache-node-modules:
@@ -24,8 +28,9 @@ inputs:
   ref:
     description: >-
       Branch, tag or SHA to check out. Defaults to the commit that triggered
-      the workflow. Not checked out, with a warning, if the workspace is
-      already a git repository.
+      the workflow. No effect, with a warning, if the workspace is already a
+      git repository: it is not checked out and nothing is downloaded from
+      it.
     required: false
     default: ''
   persist-credentials:
