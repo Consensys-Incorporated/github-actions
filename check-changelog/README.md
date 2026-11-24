@@ -103,6 +103,12 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
   script's own fetch-failure warning, whose message is escaped onto one line. Error messages go
   to stdout rather than stderr, so the runner sees them in order with the stop and resume
   markers.
+- The script refuses to read a root `package.json`, package `package.json` or `CHANGELOG.md` that
+  is a symbolic link or is under one, even one pointing inside the repository, because a link
+  from the pull request could point at any file on the runner and the file's contents could
+  appear in an error message. A refused root `package.json` or `CHANGELOG.md` fails the check; a
+  refused package `package.json` is logged and the package is treated as public, as for one that
+  can't be parsed.
 
 ## Security
 
@@ -110,7 +116,8 @@ The action installs its own pinned dependencies (`package-lock.json`) at run tim
 install scripts. It reads, but never runs, code from the target repository. Use it in
 `pull_request` workflows with a read-only token. The runner does not process workflow commands
 in the check script's output (see above), so text from the pull request can't add annotations or
-change the step's environment.
+change the step's environment. The script does not read files through symbolic links (see
+above), so a pull request can't make it show the contents of other files on the runner.
 
 ## Development
 

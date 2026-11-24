@@ -22,6 +22,10 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 BASE_BRANCH=main
 
+# Content of files outside the fixture repositories, which the output must
+# never show. Short enough to fit in the snippet of a JSON parse error.
+SECRET="LEAK-6f1d"
+
 # changelog <unreleased entries> [<version> <entries>]...
 changelog() {
   local unreleased="$1"
@@ -139,7 +143,7 @@ stray_commands() {
 
 # expect <pass|fail> <name> [<string the output must contain>...]
 #
-# Also fails if stray_commands finds anything.
+# Also fails if stray_commands finds anything, or if the output shows $SECRET.
 expect() {
   local expected="$1" name="$2"
   shift 2
@@ -155,6 +159,10 @@ expect() {
   for pattern in "$@"; do
     grep -qF -- "$pattern" <<<"$output" || ok=false
   done
+  if grep -qF -- "$SECRET" <<<"$output"; then
+    echo "    output shows $SECRET"
+    ok=false
+  fi
   local stray
   stray="$(stray_commands <<<"$output")"
   if [[ -n "$stray" ]]; then
@@ -461,6 +469,53 @@ case_fetch_fails() {
   commit
   git remote set-url origin "$WORK/does-not-exist.git"
   expect pass "base branch fetch fails" "::warning::Could not fetch main; using origin/main" "%0A"
+}
+
+# The pull request controls the checkout, so a file the script reads can be a
+# symbolic link to any file on the runner. The script must refuse it rather
+# than show the target's contents in an error.
+# secret_file <name> <contents>: creates $WORK/<name> and prints its path.
+secret_file() {
+  printf '%s\n' "$2" >"$WORK/$1"
+  echo "$WORK/$1"
+}
+
+case_symlinked_root_package_json() {
+  single_repo "$WORK/symlinked-root-package-json"
+  ln -sf "$(secret_file root-package.json "$SECRET is not JSON")" package.json
+  changelog "$entry" >CHANGELOG.md
+  commit
+  expect fail "root package.json is a symbolic link" "package.json is a symbolic link"
+}
+
+case_symlinked_package_json() {
+  monorepo "$WORK/symlinked-package-json"
+  ln -sf "$(secret_file package.json "$SECRET is not JSON")" packages/pub/package.json
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  commit
+  expect fail "package package.json is a symbolic link" \
+    "packages/pub/package.json is a symbolic link" "Changelog check failed for package packages/pub"
+}
+
+case_symlinked_changelog() {
+  monorepo "$WORK/symlinked-changelog"
+  ln -sf "$(secret_file CHANGELOG.md "$(changelog "$entry" | sed "s/^### Added\$/### $SECRET/")")" \
+    packages/pub/CHANGELOG.md
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  commit
+  expect fail "package CHANGELOG.md is a symbolic link" \
+    "packages/pub/CHANGELOG.md is a symbolic link"
+}
+
+# A link to a file inside the repository is refused too.
+case_symlinked_changelog_in_repo() {
+  monorepo "$WORK/symlinked-changelog-in-repo"
+  changelog "$entry" >packages/other/CHANGELOG.md
+  ln -sf ../other/CHANGELOG.md packages/pub/CHANGELOG.md
+  echo "export const y = 2;" >>packages/pub/src/index.ts
+  commit
+  expect fail "package CHANGELOG.md links to another in the repository" \
+    "packages/pub/CHANGELOG.md is a symbolic link"
 }
 
 case_single_repo_with_entry() {

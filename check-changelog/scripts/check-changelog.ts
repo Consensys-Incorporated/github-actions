@@ -105,13 +105,32 @@ function git(repoPath: string, args: string[]): string {
 }
 
 /**
+ * Reads a file from the checkout, refusing one that is, or is under, a
+ * symbolic link: the pull request controls the checkout, and a link could
+ * point at any file on the runner, whose contents could then end up in an
+ * error message.
+ *
+ * @param repoPath - The repository.
+ * @param filePath - Path relative to the repository.
+ * @returns The contents. Throws ENOENT as fs.readFile does.
+ */
+async function readRepoFile(repoPath: string, filePath: string): Promise<string> {
+  const fullPath = path.join(repoPath, filePath);
+  const realPath = await fs.realpath(fullPath);
+  if (realPath !== path.join(await fs.realpath(repoPath), filePath)) {
+    throw new Error(`${filePath} is a symbolic link or is under one; refusing to read it`);
+  }
+  return fs.readFile(realPath, 'utf-8');
+}
+
+/**
  * Gets the workspace patterns from the root package.json (array form only).
  *
  * @param repoPath - The repository.
  * @returns The patterns, or an empty array.
  */
 async function getWorkspacePatterns(repoPath: string): Promise<string[]> {
-  const content = await fs.readFile(path.join(repoPath, 'package.json'), 'utf-8');
+  const content = await readRepoFile(repoPath, 'package.json');
   const packageJson = JSON.parse(content) as PackageJson;
   if (!Array.isArray(packageJson.workspaces)) {
     return [];
@@ -239,7 +258,7 @@ async function getPackageVisibility(
   packageJsonPath: string,
 ): Promise<'missing' | 'private' | 'public'> {
   try {
-    const content = await fs.readFile(path.join(repoPath, packageJsonPath), 'utf-8');
+    const content = await readRepoFile(repoPath, packageJsonPath);
     return (JSON.parse(content) as PackageJson).private === true ? 'private' : 'public';
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
@@ -273,7 +292,7 @@ async function checkChangelogFile({
   packageVersion?: string | null;
 }): Promise<void> {
   try {
-    const changelogContent = await fs.readFile(path.join(repoPath, changelogPath), 'utf-8');
+    const changelogContent = await readRepoFile(repoPath, changelogPath);
     if (!changelogContent) {
       throw new Error('CHANGELOG.md is empty or missing');
     }
