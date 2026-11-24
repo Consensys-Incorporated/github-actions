@@ -55,24 +55,24 @@ jobs:
 
 ## Inputs
 
-| Input                      | Default | Description                                                                                                                                          |
-| -------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `is-high-risk-environment` |         | Required, `true` or `false`. Set `true` in any job that holds write tokens or publish credentials: no Actions cache is then read or written.           |
-| `node-version`             | `.nvmrc` | `24`, `24.x`, `v24.13`, `v24.13.0` or `lts/*`. Resolved to the newest matching release.                                                              |
-| `cache-node-modules`       | `false` | Save `node_modules` to the cache after a fresh install. If the cache already holds an entry for this lockfile, skip everything else. Low-risk only.   |
-| `force-setup`              | `false` | With `cache-node-modules`, prepare the workspace even when the cache already holds an entry.                                                         |
-| `ref`                      | trigger | Branch, tag or SHA to check out.                                                                                                                     |
-| `persist-credentials`      | `false` | Leave the job token in `.git/config`, for later steps that push with it.                                                                             |
-| `skip-install`             | `false` | Check out and set up Node.js only. No Yarn command runs and no cache is used.                                                                        |
-| `skip-allow-scripts`       | `false` | Do not run `yarn allow-scripts` after restoring `node_modules` from the cache.                                                                       |
+| Input                      | Default  | Description                                                                                                                                         |
+| -------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is-high-risk-environment` |          | Required, `true` or `false`. Set `true` in any job that holds write tokens or publish credentials: no Actions cache is then read or written.        |
+| `node-version`             | `.nvmrc` | `24`, `24.x`, `v24.13`, `v24.13.0` or `lts/*`. Resolved to the newest matching release.                                                             |
+| `cache-node-modules`       | `false`  | Save `node_modules` to the cache after a fresh install. If the cache already holds an entry for this lockfile, skip everything else. Low-risk only. |
+| `force-setup`              | `false`  | With `cache-node-modules`, prepare the workspace even when the cache already holds an entry.                                                        |
+| `ref`                      | trigger  | Branch, tag or SHA to check out.                                                                                                                    |
+| `persist-credentials`      | `false`  | Leave the job token in `.git/config`, for later steps that push with it.                                                                            |
+| `skip-install`             | `false`  | Check out and set up Node.js only. No Yarn command runs and no cache is used.                                                                       |
+| `skip-allow-scripts`       | `false`  | Do not run `yarn allow-scripts` after restoring `node_modules` from the cache.                                                                      |
 
 ## Outputs
 
-| Output                   | Description                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------- |
-| `node-modules-cache-hit` | `true` if `node_modules` was restored or found in the cache, otherwise `false`.            |
+| Output                   | Description                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `node-modules-cache-hit` | `true` if `node_modules` was restored or found in the cache, otherwise `false`.                |
 | `skipped-setup`          | `true` if setup was skipped because the cache already holds `node_modules`, otherwise `false`. |
-| `node-version`           | The Node.js version set up; empty if setup was skipped.                                     |
+| `node-version`           | The Node.js version set up; empty if setup was skipped.                                        |
 
 ## Behavior
 
