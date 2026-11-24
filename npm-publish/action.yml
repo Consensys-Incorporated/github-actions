@@ -23,26 +23,6 @@ inputs:
     description: 'The npm dist-tag to publish to.'
     required: false
     default: latest
-  slack-webhook-url:
-    description: 'Slack incoming webhook. If set, post a message that the release is awaiting deployment.'
-    required: false
-    default: ''
-  channel:
-    description: 'Slack channel to post in, without `#`. Defaults to the webhook''s channel.'
-    required: false
-    default: ''
-  subteam:
-    description: 'Slack user group ID to mention.'
-    required: false
-    default: ''
-  username:
-    description: 'Name of the bot in Slack.'
-    required: false
-    default: npm-publish
-  icon-url:
-    description: 'Avatar URL of the bot in Slack.'
-    required: false
-    default: ''
 
 outputs:
   dry-run:
@@ -101,29 +81,3 @@ runs:
           ${{ runner.temp }}/npm-publish-packages/*.tgz
           ${{ runner.temp }}/npm-publish-packages/*.html
 
-    - name: Generate Slack payload
-      id: slack-payload
-      if: ${{ inputs.slack-webhook-url != '' }}
-      continue-on-error: true
-      shell: bash
-      env:
-        PAYLOAD_FILE: ${{ runner.temp }}/npm-publish-slack-payload.json
-        SERVER_URL: ${{ github.server_url }}
-        REPOSITORY: ${{ github.repository }}
-        RUN_ID: ${{ github.run_id }}
-        SLACK_SUBTEAM: ${{ inputs.subteam }}
-        SLACK_USERNAME: ${{ inputs.username }}
-        SLACK_ICON_URL: ${{ inputs.icon-url }}
-        SLACK_CHANNEL: ${{ inputs.channel }}
-        ACTION_PATH: ${{ github.action_path }}
-      run: '"$ACTION_PATH/scripts/slack-payload.sh"'
-
-    - name: Post to Slack
-      if: ${{ inputs.slack-webhook-url != '' && steps.slack-payload.outcome == 'success' }}
-      continue-on-error: true
-      uses: slackapi/slack-github-action@0bc3581177d9a0f8d555e07689384b376528e8fa # v4.1.0
-      with:
-        webhook: ${{ inputs.slack-webhook-url }}
-        webhook-type: incoming-webhook
-        payload-file-path: ${{ runner.temp }}/npm-publish-slack-payload.json
-        retries: rapid

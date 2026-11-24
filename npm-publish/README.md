@@ -49,16 +49,11 @@ jobs:
 
 ## Inputs
 
-| Input               | Default       | Description                                                                                                       |
-| ------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `npm-token`         |               | Used only for a package's first publish.                                                                          |
-| `dry-run`           |               | `true`: pack instead of publishing. `false`: fail when a credential is missing. Unset: pack when one is missing. |
-| `npm-tag`           | `latest`      | The dist-tag. Must not be empty.                                                                                  |
-| `slack-webhook-url` |               | If set, post that the release is awaiting deployment.                                                             |
-| `channel`           |               | Slack channel, without `#`. Defaults to the webhook's channel.                                                    |
-| `subteam`           |               | Slack user group ID to mention.                                                                                   |
-| `username`          | `npm-publish` | Bot name in Slack.                                                                                                |
-| `icon-url`          |               | Bot avatar URL in Slack.                                                                                          |
+| Input       | Default  | Description                                                                                                      |
+| ----------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
+| `npm-token` |          | Used only for a package's first publish.                                                                         |
+| `dry-run`   |          | `true`: pack instead of publishing. `false`: fail when a credential is missing. Unset: pack when one is missing. |
+| `npm-tag`   | `latest` | The dist-tag. Must not be empty.                                                                                 |
 
 Set `dry-run` explicitly on both jobs: with it unset, a publish job whose OIDC grant is missing
 packs and passes instead of failing.
@@ -90,16 +85,13 @@ packs and passes instead of failing.
    SHA-1 and integrity to the step summary, write a `pkdiff` report against `<name>@latest`, and
    upload the tarballs and reports as the
    `npm-publish-dry-run-<sha>` artifact.
-4. **Slack** (if `slack-webhook-url` is set): post `` `<name>@<version>` is awaiting deployment``
-   with a link to the workflow run. A Slack failure does not fail the action.
 
 ## Differences from upstream
 
 - `staged-publish` and `provenance` are removed: OIDC publishes are always staged, with
   provenance for public repositories.
-- No MetaMask defaults: `username` defaults to `npm-publish`, `icon-url` has no default, and the
-  Slack message has no link to MetaMask's instructions.
-- The Slack payload is built with `jq` from arguments, not by interpolating values into JSON.
+- No Slack notification: upstream posts an "awaiting deployment" Slack message; this port
+  doesn't, so `slack-webhook-url`, `channel`, `subteam`, `username` and `icon-url` are removed.
 - Publish commands are bash arrays, not strings split on spaces.
 - The artifact has an explicit name, overwritten by a second dry run in the same workflow run.
 - `pkdiff` is installed from `/tmp`, so no `.npmrc` in the repository applies.
@@ -111,7 +103,6 @@ packs and passes instead of failing.
   npm yet, so re-running a release doesn't fail on an existing version.
 - Lifecycle scripts are removed from private workspaces too.
 - `dry-run` is `true` if any package was packed, whatever order the packages were handled in.
-- The Slack message keeps a scoped name's `@`.
 
 ## Security
 
@@ -128,5 +119,4 @@ packs and passes instead of failing.
 `.github/workflows/test_npm-publish.yml` runs it, and runs the action with real Yarn against
 fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a
 foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath` and lifecycle scripts
-would write marker files, and the Slack notification against a local listener and a dead
-webhook.
+would write marker files.
