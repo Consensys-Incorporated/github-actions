@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Analysis of a `git diff -U9999` of a workspace package.json, ported from
-// MetaMask/github-tools src/changelog-check.mts. The devDependencies block is
-// the first `"devDependencies":` line up to the next unchanged, removed or
-// added line starting with `}`. As upstream, a changed line is located by its
-// first exact occurrence in the diff.
+// MetaMask/github-tools src/changelog-check.mts. The devDependencies block
+// ends at the first unchanged, removed or added line starting with `}` that
+// follows a `"devDependencies":` line, and starts at the last
+// `"devDependencies":` line before it. As upstream, a changed line is located
+// by its first exact occurrence in the diff.
 
 import semver from 'semver';
 

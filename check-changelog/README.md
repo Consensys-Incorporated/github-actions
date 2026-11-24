@@ -63,7 +63,8 @@ section must exist. Every changed package is checked and every failure reported.
 the pull request.
 
 The `devDependencies` block is taken to end at the first line of the diff (unchanged, removed or
-added) starting with `}` after it, and only the first `"devDependencies":` is considered.
+added) starting with `}` that follows a `"devDependencies":` line, and to start at the last
+`"devDependencies":` line before that.
 
 ## Differences from upstream
 
