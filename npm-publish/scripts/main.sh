@@ -87,11 +87,31 @@ publish_monorepo() {
     exec "$script_path/publish.sh"
 }
 
+publish_polyrepo() {
+  echo "No workspaces detected. Treating as a polyrepo."
+
+  if [[ "$(jq '.private' package.json)" == "true" ]]; then
+    echo "The package is private. Not publishing."
+    return 0
+  fi
+
+  local manifest name version pending
+  # Separate assignments, so that set -e applies to each.
+  manifest="$(jq --raw-output '[.name // "", .version // ""] | @tsv' package.json)"
+  IFS=$'\t' read -r name version <<<"$manifest"
+  pending="$("$script_path/needs-publish.sh" "$name" "$version")"
+  if [[ -z "$pending" ]]; then
+    echo "No packages need publishing."
+    return 0
+  fi
+
+  "$script_path/publish.sh"
+}
+
 if [[ "$(jq 'has("workspaces")' package.json)" == "true" ]]; then
   publish_monorepo
 else
-  echo "No workspaces detected. Treating as a polyrepo."
-  "$script_path/publish.sh"
+  publish_polyrepo
 fi
 
 if compgen -G "$PACK_DIR/*.tgz" >/dev/null; then
