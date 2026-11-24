@@ -33,6 +33,7 @@ runs:
   using: composite
   steps:
     - name: Sanitize Yarn configuration
+      id: sanitize
       shell: bash
       env:
         YARN_IGNORE_PATH: '1'
@@ -44,6 +45,7 @@ runs:
       shell: bash
       env:
         YARN_IGNORE_PATH: '1'
+        YARN_RC_FILENAME: ${{ steps.sanitize.outputs.yarn-rc-filename }}
         YARN_NPM_AUTH_TOKEN: ${{ inputs.npm-token }}
         PUBLISH_NPM_TAG: ${{ inputs.npm-tag }}
         DRY_RUN: ${{ inputs.dry-run }}

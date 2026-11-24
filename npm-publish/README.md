@@ -67,8 +67,9 @@ packs and passes instead of failing.
 ## Behavior
 
 1. **Sanitize** (`scripts/sanitize.sh`), before any Yarn command: unset `YARN_*` variables (except
-   the action's own), point Yarn at a minimal generated configuration outside the checkout
-   (`enableScripts: false`, the npm registry only, no plugins), ignore `yarnPath`, delete
+   the action's own), point the action's own Yarn steps at a minimal generated configuration
+   outside the checkout (`enableScripts: false`, the npm registry only, no plugins), ignore
+   `yarnPath`, delete
    `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
    `https://registry.npmjs.org`, and delete `prepublish`, `prepublishOnly`, `prepack` and
    `postpack` scripts from every workspace, private ones included.
@@ -103,6 +104,8 @@ packs and passes instead of failing.
   npm yet, so re-running a release doesn't fail on an existing version.
 - Lifecycle scripts are removed from private workspaces too.
 - `dry-run` is `true` if any package was packed, whatever order the packages were handled in.
+- The generated Yarn configuration is passed to the action's own steps only. Upstream writes
+  `YARN_RC_FILENAME` to `$GITHUB_ENV`, so every later Yarn command in the caller's job uses it too.
 
 ## Security
 
@@ -119,4 +122,4 @@ packs and passes instead of failing.
 `.github/workflows/test_npm-publish.yml` runs it, and runs the action with real Yarn against
 fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a
 foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath` and lifecycle scripts
-would write marker files.
+would write marker files, and that `YARN_RC_FILENAME` isn't set in the caller's later steps.

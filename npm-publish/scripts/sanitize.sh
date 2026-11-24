@@ -8,7 +8,9 @@
 #
 # 1. Yarn is pointed to a minimal configuration file, stored outside of the
 #    checkout under a random name, so it cannot be shadowed by a file in the
-#    repository. The repository's own `.yarnrc.yml` is never loaded.
+#    repository. The repository's own `.yarnrc.yml` is never loaded. Its
+#    name is the `yarn-rc-filename` step output, which action.yml passes to
+#    the later steps that run Yarn as YARN_RC_FILENAME.
 #    (YARN_IGNORE_PATH=1, set on every step, ignores `yarnPath`.)
 # 2. The user-level `~/.yarnrc.yml` is removed: Yarn always loads it, and it
 #    can also list plugins.
@@ -41,8 +43,10 @@ EOF
 
 export YARN_RC_FILENAME="$rc_filename"
 
-if [[ -n "${GITHUB_ENV:-}" ]]; then
-  echo "YARN_RC_FILENAME=$rc_filename" >>"$GITHUB_ENV"
+# Passed to the action's later Yarn steps as a step output, not through
+# $GITHUB_ENV, so the caller's later steps keep their own Yarn configuration.
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "yarn-rc-filename=$rc_filename" >>"$GITHUB_OUTPUT"
 fi
 
 rm -f "$HOME/.yarnrc.yml"

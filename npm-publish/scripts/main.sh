@@ -5,8 +5,9 @@
 # npm yet. Run after sanitize.sh.
 #
 # Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
-# REPOSITORY_VISIBILITY, GH_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, PACK_DIR, and
-# YARN_RC_FILENAME / YARN_IGNORE_PATH from sanitize.sh.
+# REPOSITORY_VISIBILITY, GH_TOKEN, GITHUB_SHA, GITHUB_REPOSITORY, PACK_DIR,
+# YARN_IGNORE_PATH, and YARN_RC_FILENAME (the configuration file written by
+# sanitize.sh).
 #
 # Outputs (to $GITHUB_OUTPUT): dry-run=true if any package was packed rather
 # than published.
@@ -27,6 +28,12 @@ mkdir -p "$PACK_DIR"
 
 # shellcheck source=SCRIPTDIR/environment.sh
 source "$script_path/environment.sh"
+
+# Without it, Yarn would load the repository's own .yarnrc.yml.
+if [[ -z "${YARN_RC_FILENAME:-}" ]]; then
+  echo "::error::YARN_RC_FILENAME not set. Run sanitize.sh first."
+  exit 1
+fi
 
 yarn_version="$(yarn --version)"
 IFS='.' read -r yarn_major yarn_minor _ <<<"$yarn_version"

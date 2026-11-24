@@ -168,10 +168,13 @@ run_main() {
   LOG="$(cd "$PKG" && env -u ACTIONS_ID_TOKEN_REQUEST_URL -u GITHUB_SHA \
     PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" PACK_DIR="$PACK_DIR" \
     GITHUB_OUTPUT="$WORK/output" GITHUB_STEP_SUMMARY="$WORK/summary" \
-    PUBLISH_NPM_TAG=next DRY_RUN=true "$@" "$SCRIPTS/main.sh" 2>&1)"
+    PUBLISH_NPM_TAG=next DRY_RUN=true YARN_RC_FILENAME=.yarnrc-test.yml "$@" "$SCRIPTS/main.sh" 2>&1)"
   STATUS=$?
   set -e
 }
+
+run_main YARN_RC_FILENAME=
+check "missing Yarn configuration file fails" failed_with "YARN_RC_FILENAME not set"
 
 run_main PUBLISH_NPM_TAG=
 check "empty npm-tag fails" failed_with "'npm-tag' not set"
