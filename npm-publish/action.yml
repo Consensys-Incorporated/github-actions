@@ -1,13 +1,27 @@
-name: 'Publish to npm'
-description: 'Publish the release to npm'
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'npm-publish'
+description: >-
+  Publish every public workspace package whose current version is not on npm
+  yet: with OIDC for packages already on npm, and with a token for a
+  package's first publish. Without a usable credential, pack the packages
+  instead (a dry run). The repository cannot run code while publishing.
+
 inputs:
   npm-token:
-    description: 'The token used for npm publishing. Only used for the initial publish of a package, to allow for OIDC to be set up for subsequent publishes. If not provided, the action will attempt to use OIDC for authentication.'
+    description: 'npm token, used only for the first publish of a package. Later publishes use OIDC.'
     required: false
+    default: ''
+  dry-run:
+    description: >-
+      `true` to pack instead of publishing. `false` to fail when a credential
+      is missing instead of packing. Unset: pack when a credential is missing.
+    required: false
+    default: ''
   npm-tag:
-    description: 'The npm tag to publish to. Defaults to "latest".'
+    description: 'The npm dist-tag to publish to.'
     required: false
-    default: 'latest'
+    default: latest
   staged-publish:
     description: 'Whether to use staged publishing. Defaults to "true". If set to "false", the action will publish directly to NPM without a staging step.'
     required: false
@@ -17,65 +31,71 @@ inputs:
     required: false
     default: 'true'
   slack-webhook-url:
-    description: 'Slack Webhook URL'
+    description: 'Slack incoming webhook. If set, post a message that the release is awaiting deployment.'
     required: false
-  icon-url:
-    description: 'Url to the avatar used for the bot in Slack'
+    default: ''
+  channel:
+    description: 'Slack channel to post in, without `#`. Defaults to the webhook''s channel.'
     required: false
-    default: 'https://raw.githubusercontent.com/MetaMask/action-npm-publish/main/robo.png'
+    default: ''
+  subteam:
+    description: 'Slack user group ID to mention.'
+    required: false
+    default: ''
   username:
-    description: 'The name of the bot as it appears on Slack'
+    description: 'Name of the bot in Slack.'
     required: false
     default: 'MetaMask bot'
-  subteam:
-    description: 'Use this if you want to ping a subteam of individuals on Slack using @'
+  icon-url:
+    description: 'Avatar URL of the bot in Slack.'
     required: false
-  channel:
-    description: 'The Slack channel to post in'
-    required: false
-  dry-run:
-    description: 'Enables dry run mode, which prepares the package for publishing but does not publish it'
-    required: false
+    default: 'https://raw.githubusercontent.com/MetaMask/action-npm-publish/main/robo.png'
 
 runs:
-  using: 'composite'
+  using: composite
   steps:
     - name: Sanitize Yarn configuration
       shell: bash
-      run: ${{ github.action_path }}/scripts/sanitize.sh
       env:
         YARN_IGNORE_PATH: '1'
-    - name: Run main publish script
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/sanitize.sh"'
+
+    - name: Publish
       id: publish
       shell: bash
-      run: ${{ github.action_path }}/scripts/main.sh
       env:
         YARN_IGNORE_PATH: '1'
         YARN_NPM_AUTH_TOKEN: ${{ inputs.npm-token }}
         PUBLISH_NPM_TAG: ${{ inputs.npm-tag }}
         STAGED_PUBLISH: ${{ inputs.staged-publish }}
         PROVENANCE: ${{ inputs.provenance }}
-        REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         DRY_RUN: ${{ inputs.dry-run }}
-        GITHUB_TOKEN: ${{ github.token }}
-    - name: Install `pkdiff`
-      id: install-pkdiff
-      if: steps.publish.outputs.dry-run == 'true'
+        REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        GH_TOKEN: ${{ github.token }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/main.sh"'
+
+    - name: Install pkdiff
+      if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
       run: npm i -g pkdiff@2.0.1
+
     - name: Generate package diff report
-      id: generate-report
+      if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
-      if: steps.publish.outputs.dry-run == 'true'
-      run: ${{ github.action_path }}/scripts/report.sh
-    - name: Upload package report artifact
-      id: upload-artifact
-      if: steps.publish.outputs.dry-run == 'true'
-      uses: actions/upload-artifact@v4
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/report.sh"'
+
+    - name: Upload packages and report
+      if: ${{ steps.publish.outputs.dry-run == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         path: |
           /tmp/*.tgz
           /tmp/*.html
+
     - name: Generate Slack publish message (1/2)
       id: name-version
       shell: bash
