@@ -68,12 +68,15 @@ heading or the first link reference definition, with blank lines trimmed at both
   `release.config.json` fails instead of defaulting to fixed versioning.
 - Changelog sections are extracted in awk rather than parsed and re-rendered with
   `@metamask/auto-changelog` v3. The notes keep the file's own spacing; auto-changelog v3 put no
-  blank line after `###` headings.
+  blank line after `###` headings. CRLF changelogs are read.
+- An empty changelog section for a released package fails, as an empty root section does.
 - Workspace listing supports `<dir>/*` and literal patterns only, and fails on others instead of
-  globbing them.
+  globbing them. Workspace names must be valid npm package names.
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
-- Only the new tags are pushed, by name, instead of `git push --tags`.
+- The notes are passed with `--notes-file` instead of as an argument.
+- Only the new tags are pushed, by name, instead of `git push --tags`, to `GITHUB_SERVER_URL`
+  instead of a hard-coded `github.com`.
 
 ## Security
 
