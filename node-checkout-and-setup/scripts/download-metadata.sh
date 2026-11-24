@@ -11,7 +11,8 @@
 #   OWNER_AND_REPO, COMMIT_HASH, REPO_VISIBILITY, GH_TOKEN
 #   METADATA_DIR: where to put .nvmrc and package.json
 #
-# Outputs (to $GITHUB_OUTPUT): nvmrc-path, yarn-lock-available, package-json-path
+# Outputs (to $GITHUB_OUTPUT): nvmrc-path, yarn-lock-available,
+#   yarn-lock-downloaded, package-json-path
 
 set -euo pipefail
 
@@ -67,17 +68,20 @@ write_output "nvmrc-path" "$nvmrc_path"
 # into the workspace root. actions/checkout overwrites it later. A failed
 # download only disables the lookup-only cache check.
 yarn_lock_available="false"
+yarn_lock_downloaded="false"
 if [[ -s yarn.lock ]]; then
   yarn_lock_available="true"
 elif [[ "$low_risk_cache_lookup" == "true" ]]; then
   if download_file "yarn.lock" "yarn.lock"; then
     yarn_lock_available="true"
+    yarn_lock_downloaded="true"
   else
     rm -f yarn.lock
     echo "::warning::Failed to download yarn.lock from ${OWNER_AND_REPO}@${COMMIT_HASH}; not checking for a cache hit before setup."
   fi
 fi
 write_output "yarn-lock-available" "$yarn_lock_available"
+write_output "yarn-lock-downloaded" "$yarn_lock_downloaded"
 
 # package.json gives the workspace node_modules paths to cache. Without it,
 # the cache falls back to the broad **/node_modules path.

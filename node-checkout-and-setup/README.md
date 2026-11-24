@@ -21,6 +21,8 @@ and replaces
 - If the selected Node.js doesn't ship Corepack (25 and later), `corepack@0.36.0` is installed for
   it.
 - `allow-scripts` is detected by `node_modules/.bin/allow-scripts` rather than `yarn bin`.
+- A downloaded `yarn.lock` is removed when no checkout overwrites it, so a pre-checked-out tree
+  without one fails `yarn --immutable` instead of installing from the downloaded lockfile.
 
 ## Usage
 
@@ -79,7 +81,9 @@ jobs:
 1. Before checkout, download `.nvmrc`, `yarn.lock` and `package.json` from the requested ref, as
    needed and unless already in the workspace (from `raw.githubusercontent.com` for a public
    repository, otherwise with `gh api` and the job token). `yarn.lock` is written to the
-   workspace root and overwritten by the checkout.
+   workspace root and overwritten by the checkout. If no checkout follows (the setup is skipped,
+   or the workspace was already checked out), the downloaded `yarn.lock` is removed after the
+   lookup.
 2. With `cache-node-modules` in a low-risk job, look up the cache key without downloading. On a
    hit, the job's purpose (warming the cache) is met and the remaining steps are skipped.
 3. Check out with `fetch-depth: 1`, set up Node.js, `corepack enable`.

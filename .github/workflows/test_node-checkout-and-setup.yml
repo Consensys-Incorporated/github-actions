@@ -607,6 +607,40 @@ jobs:
             exit 1
           fi
 
+  # A checked-out tree without a root yarn.lock: the yarn.lock downloaded for
+  # the cache lookup must not be used for the install.
+  pre-checked-out-without-yarn-lock:
+    name: Pre-checked-out workspace without yarn.lock does not keep the downloaded one
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace without yarn.lock
+        run: |
+          actions-repo/node-checkout-and-setup/test/prepare-workspace.sh
+          git rm -q yarn.lock
+          git commit -q -m "Remove yarn.lock"
+      - name: Run action
+        id: action
+        continue-on-error: true
+        uses: ./actions-repo/node-checkout-and-setup
+        with:
+          is-high-risk-environment: false
+          cache-node-modules: true
+          node-version: 24.x
+          # The ref the metadata is downloaded from; its root has a yarn.lock.
+          ref: ${{ env.FIXTURE_BRANCH }}
+      - name: Assert the install failed without a lockfile
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          # yarn --immutable refuses to create a lockfile. Before the downloaded
+          # yarn.lock was removed, the install succeeded with it.
+          [[ "$OUTCOME" == "failure" ]]
+          test ! -e yarn.lock
+
   pre-checked-out:
     name: Pre-checked-out workspace is not checked out again
     runs-on: ubuntu-latest
