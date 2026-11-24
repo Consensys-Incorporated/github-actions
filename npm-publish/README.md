@@ -118,7 +118,10 @@ packs and passes instead of failing.
 ## Tests
 
 `test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims.
-`.github/workflows/test_npm-publish.yml` runs it, and runs the action with real Yarn against
-fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a
-foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath` and lifecycle scripts
-would write marker files, and that `YARN_RC_FILENAME` isn't set in the caller's later steps.
+`test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
+except the action's own. `.github/workflows/test_npm-publish.yml` runs both, and runs the action
+with real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures
+without credentials, a foreign registry, old Yarn, a polyrepo, a project whose plugin, `yarnPath`
+and lifecycle scripts would write marker files, that `YARN_*` overrides such as
+`YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads, and that
+`YARN_RC_FILENAME` isn't set in the caller's later steps.

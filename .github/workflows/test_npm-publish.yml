@@ -17,7 +17,8 @@ env:
   NEW_PACKAGE_TARBALL: '@consensys-incorporated-test-npm-publish-fixture-a-1.0.0.tgz'
 
 jobs:
-  # publish.sh mode selection and main.sh checks, with yarn and npm shimmed.
+  # publish.sh mode selection and main.sh checks, with yarn and npm shimmed,
+  # and environment.sh's unsetting of YARN_* variables.
   modes:
     name: Publish modes
     runs-on: ubuntu-latest
@@ -26,6 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - run: npm-publish/test/publish-modes.sh
+      - run: npm-publish/test/environment-variables.sh
 
   # The remaining jobs run the action with real Yarn against fixture projects
   # built in the workspace root. None has id-token: write, so no OIDC.
@@ -206,9 +208,9 @@ jobs:
           actions-repo/npm-publish/test/make-fixture.sh canary "$GITHUB_WORKSPACE"
       - name: Dry run
         uses: ./actions-repo/npm-publish
-        # With pnp, Yarn does not find the node-modules install and packing
-        # fails, unless the action unsets the variable. The registry override
-        # would make the npm lookups fail.
+        # The dry run passes with or without these overrides: packing does not
+        # use the registry, and npm lookups use npm, not Yarn. The last step
+        # checks that they are ignored.
         env:
           YARN_NODE_LINKER: pnp
           YARN_NPM_REGISTRY_SERVER: https://npm.example.com
@@ -231,3 +233,45 @@ jobs:
           test -f "$tarball"
           tar -O -zxf "$tarball" package/package.json |
             jq --exit-status '.scripts | (has("prepublish") or has("prepublishOnly") or has("prepack") or has("postpack")) | not'
+      # Reads the effective configuration the way the Publish step does: the
+      # generated file as YARN_RC_FILENAME, the job's YARN_* variables, and
+      # environment.sh. Last, so that no Yarn command runs before the canary
+      # checks.
+      - name: Assert YARN_* overrides are ignored
+        env:
+          YARN_IGNORE_PATH: '1'
+          YARN_NPM_REGISTRY_SERVER: https://example.invalid
+          YARN_NPM_PUBLISH_REGISTRY: https://example.invalid
+          YARN_NODE_LINKER: pnp
+          YARN_ENABLE_SCRIPTS: 'true'
+        run: |
+          shopt -s nullglob
+          rc_files=("$(dirname "$GITHUB_WORKSPACE")"/.yarnrc-*.yml)
+          if [[ ${#rc_files[@]} -ne 1 ]]; then
+            echo "::error::Expected one generated Yarn configuration file, found ${#rc_files[@]}."
+            exit 1
+          fi
+          export YARN_RC_FILENAME="${rc_files[0]##*/}"
+
+          # Control: without environment.sh the override applies, so the
+          # assertion below can fail.
+          if [[ "$(yarn config get npmRegistryServer)" != "$YARN_NPM_REGISTRY_SERVER" ]]; then
+            echo "::error::YARN_NPM_REGISTRY_SERVER has no effect, so this test proves nothing."
+            exit 1
+          fi
+
+          source actions-repo/npm-publish/scripts/environment.sh
+          failed=0
+          for entry in \
+            npmRegistryServer=https://registry.npmjs.org \
+            npmPublishRegistry=https://registry.npmjs.org \
+            nodeLinker=node-modules \
+            enableScripts=false; do
+            key="${entry%%=*}"
+            value="$(yarn config get "$key")"
+            if [[ "$value" != "${entry#*=}" ]]; then
+              echo "::error::$key is '$value', expected '${entry#*=}'."
+              failed=1
+            fi
+          done
+          exit "$failed"
