@@ -70,4 +70,5 @@ fails. Use it on pushes to an existing branch.
 `test/fixtures.sh` builds fixture repositories with local origins, clones them with `--depth 2`
 and runs the script; `.github/workflows/test_npm-is-release.yml` runs it and runs the action with
 `skip-checkout`. Run against upstream's script, the fixtures give the same results except for the
-two literal-matching cases.
+cases covering the differences above: the two literal-matching cases and the three prefix-list
+cases (spaces after commas, newline separators, empty prefixes).

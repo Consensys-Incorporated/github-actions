@@ -9,7 +9,7 @@
 #
 # Environment:
 #   BEFORE: the commit to compare with (required)
-#   COMMIT_STARTS_WITH: comma-separated prefixes (optional)
+#   COMMIT_STARTS_WITH: prefixes separated by commas or newlines (optional)
 #   COMMIT_MESSAGE: message to check instead of HEAD's subject (optional)
 #
 # Outputs (to $GITHUB_OUTPUT): IS_RELEASE=true|false
