@@ -70,6 +70,19 @@ else
 
   workspaces="$(list_workspaces .)"
 
+  # tag_exists <tag>: 0 if it exists, 1 if not (HTTP 404); exits on other errors.
+  tag_exists() {
+    local tag="$1" err
+    if err="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent 2>&1)"; then
+      return 0
+    fi
+    if [[ "$err" == *"HTTP 404"* ]]; then
+      return 1
+    fi
+    echo "::error::Could not look up tag $tag: $err"
+    exit 1
+  }
+
   declare -A seen_names=()
   while IFS= read -r location; do
     manifest="$location/package.json"
@@ -97,8 +110,7 @@ else
       exit 1
     fi
 
-    # Any lookup error is treated as "not released yet", as upstream does.
-    if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$name@$version" --silent 2>/dev/null; then
+    if tag_exists "$name@$version"; then
       echo "Skipping $name@$version: already released."
     else
       echo "Releasing $name@$version ($location)."
