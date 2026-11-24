@@ -48,15 +48,17 @@ fi
 rm -f "$HOME/.yarnrc.yml"
 
 # The workspace list is read with the configuration above, so no code from the
-# repository is loaded. In a polyrepo, the root is the only workspace.
-locations="$(yarn workspaces list --json --no-private | jq --raw-output '.location')"
+# repository is loaded. In a polyrepo, the root is the only workspace. Private
+# workspaces are included: they aren't published, but their lifecycle scripts
+# are removed anyway.
+locations="$(yarn workspaces list --json | jq --raw-output '.location')"
 
 while IFS= read -r location; do
   [[ -z "$location" ]] && continue
 
   manifest="$location/package.json"
 
-  registry="$(jq --raw-output '.publishConfig.registry // empty' "$manifest")"
+  registry="$(jq --raw-output 'if .private == true then empty else .publishConfig.registry // empty end' "$manifest")"
   if [[ -n "$registry" && "${registry%/}" != "https://registry.npmjs.org" ]]; then
     echo "::error::\"$manifest\" sets \"publishConfig.registry\" to \"$registry\". Only \"https://registry.npmjs.org\" is supported."
     exit 1
