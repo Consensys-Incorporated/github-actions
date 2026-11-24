@@ -94,7 +94,9 @@ fails the action before anything else runs.
      `dry-run: false`);
    - on npm: with OIDC, `yarn npm publish --tag <tag> --staged` (plus `--provenance` for a public
      repository); without, pack (or fail if `dry-run: false`). The token is never used here.
-   An npm lookup error other than "not found" fails the action.
+   An npm lookup error other than "not found" fails the action, as does a package name that isn't
+   a valid npm name, a version that isn't a semantic version, or a workspace location with a
+   control character.
 4. **Dry run**: tarballs are written to `$RUNNER_TEMP/npm-publish-packages`. Log each tarball's
    SHA-1 and integrity to the step summary, write a `pkdiff` report against `<name>@latest`, and
    upload the tarballs and reports as the
@@ -130,6 +132,11 @@ fails the action before anything else runs.
   step can't make them run code through `$GITHUB_ENV`.
 - With `RUNNER_DEBUG`, `main.sh`, `publish.sh` and `needs-publish.sh` don't trace commands
   (`set -x`): their environment holds the token, which GitHub masks only if it came from a secret.
+- Package names, versions and workspace locations are validated (see Behavior), names and
+  versions reach `xargs` NUL-separated rather than split on spaces and quotes, and Yarn's output
+  while packing or publishing, which lists file names from the repository, is printed between
+  `::stop-commands::` markers, so that no repository-controlled text is read as a workflow command.
+  A non-npm `publishConfig.registry` is printed as JSON, on one line.
 - The release pull request is looked up in its own step, so `GH_TOKEN` is not in the Publish
   step's environment.
 - The generated Yarn configuration is passed to the action's own steps only. Upstream writes
@@ -143,19 +150,21 @@ fails the action before anything else runs.
 - Packages are published only to `https://registry.npmjs.org`.
 - The token is used only for a package's first publish; existing packages publish only with OIDC,
   staged and with provenance.
-- No manifest value is interpolated into a `run:` step.
+- No manifest value is interpolated into a `run:` step, and none is printed where the runner could
+  read it as a workflow command.
 
 ## Tests
 
 `test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims, that an invalid `dry-run`
-fails, that `RUNNER_DEBUG` doesn't print the token, and that a monorepo's workspaces are handled in
-Yarn's order and stop at the first failure. `test/environment-variables.sh` tests that
-`scripts/environment.sh` unsets every `YARN_*` variable except the action's own, and that real
-Corepack then ignores a `.corepack.env` that allows a URL as the `packageManager`.
-`.github/workflows/test_npm-publish.yml` runs both, and runs the action with real Yarn against
-fixture projects built by `test/make-fixture.sh`: dry runs, failures without credentials, a foreign
-registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step), a polyrepo, a project
-whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker
-files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*` overrides such as
-`YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads, and that
-`YARN_RC_FILENAME` isn't set in the caller's later steps.
+fails, that invalid names and versions fail without being read as workflow commands, that Yarn's
+output is wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that a
+monorepo's workspaces are handled in Yarn's order and stop at the first failure.
+`test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
+except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
+the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
+real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, failures without
+credentials, a foreign registry, old Yarn, an invalid `dry-run` (rejected before the sanitize step),
+a polyrepo, a project whose plugin, `yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins
+would write marker files, as would `BASH_ENV` and `NODE_OPTIONS` set in `$GITHUB_ENV`, that `YARN_*`
+overrides such as `YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads,
+and that `YARN_RC_FILENAME` isn't set in the caller's later steps.

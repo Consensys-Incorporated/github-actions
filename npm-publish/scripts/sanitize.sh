@@ -55,16 +55,24 @@ rm -f "$HOME/.yarnrc.yml"
 # repository is loaded. In a polyrepo, the root is the only workspace. Private
 # workspaces are included: they aren't published, but their lifecycle scripts
 # are removed anyway.
-locations="$(yarn workspaces list --json | jq --raw-output '.location')"
+locations="$(
+  yarn workspaces list --json | jq --raw-output '
+    .location |
+    if test("[[:cntrl:]]") then
+      "::error::A workspace location contains a control character.\n" | halt_error(1)
+    else . end
+  '
+)"
 
 while IFS= read -r location; do
   [[ -z "$location" ]] && continue
 
   manifest="$location/package.json"
 
-  registry="$(jq --raw-output 'if .private == true then empty else .publishConfig.registry // empty end' "$manifest")"
-  if [[ -n "$registry" && "${registry%/}" != "https://registry.npmjs.org" ]]; then
-    echo "::error::\"$manifest\" sets \"publishConfig.registry\" to \"$registry\". Only \"https://registry.npmjs.org\" is supported."
+  # As JSON, so that it prints on one line.
+  registry="$(jq --compact-output 'if .private == true then empty else .publishConfig.registry // empty end' "$manifest")"
+  if [[ -n "$registry" && "$registry" != '"https://registry.npmjs.org"' && "$registry" != '"https://registry.npmjs.org/"' ]]; then
+    echo "::error::\"$manifest\" sets \"publishConfig.registry\" to $registry. Only \"https://registry.npmjs.org\" is supported."
     exit 1
   fi
 

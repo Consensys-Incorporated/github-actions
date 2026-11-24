@@ -54,7 +54,12 @@ publish_monorepo() {
   local workspaces
   workspaces="$(
     yarn workspaces list --json --no-private |
-      jq --raw-output '.location' |
+      jq --raw-output '
+        .location |
+        if test("[[:cntrl:]]") then
+          "::error::A workspace location contains a control character.\n" | halt_error(1)
+        else . end
+      ' |
       while IFS= read -r location; do
         jq --raw-output --arg location "$location" '
           [
@@ -67,9 +72,17 @@ publish_monorepo() {
   )"
 
   # Determine up front which workspaces need publishing. Workspaces are
-  # checked in parallel.
+  # checked in parallel. Names and versions are passed NUL-separated, so that
+  # xargs doesn't split them on spaces or quotes.
   local pending
-  pending="$(cut -f 2,3 <<<"$workspaces" | xargs -P 10 -n 2 "$script_path/needs-publish.sh")"
+  pending="$(
+    while IFS=$'\t' read -r _location name version; do
+      if [[ -n "$name" ]]; then
+        printf '%s\0%s\0' "$name" "$version"
+      fi
+    done <<<"$workspaces" |
+      xargs -0 -P 10 -n 2 "$script_path/needs-publish.sh"
+  )"
 
   if [[ -z "$pending" ]]; then
     echo "No packages need publishing."

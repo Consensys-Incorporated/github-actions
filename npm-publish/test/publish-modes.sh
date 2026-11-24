@@ -41,6 +41,7 @@ EOF
 
 # yarn: logs its arguments and whether YARN_NPM_AUTH_TOKEN is set; implements
 # --version, `workspaces list` (prints $SHIM_WORKSPACES) and `pack --out`.
+# Prints a workflow command, as a packed file's name could.
 cat >"$SHIMS/yarn" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "--version" ]]; then
@@ -54,6 +55,7 @@ fi
 printf 'yarn' >>"$SHIM_LOG"
 printf ' %q' "$@" >>"$SHIM_LOG"
 printf ' [token=%s]\n' "${YARN_NPM_AUTH_TOKEN:+set}" >>"$SHIM_LOG"
+echo "::warning::from yarn"
 if [[ "$1" == "pack" && "$2" == "--out" ]]; then
   name="$(jq -r .name package.json)"
   version="$(jq -r .version package.json)"
@@ -168,6 +170,19 @@ check "RUNNER_DEBUG=1: publish.sh doesn't print the token" no_token_in_log npm_s
 run_publish yes RUNNER_DEBUG=1 YARN_NPM_AUTH_TOKEN=npm_secret_value ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc
 check "RUNNER_DEBUG=1, OIDC: publish.sh doesn't print the token" no_token_in_log npm_secret_value
 
+# Yarn's output is wrapped in ::stop-commands::<token> ... ::<token>::.
+yarn_output_quoted() {
+  local token
+  token="$(sed -n 's/^::stop-commands::\([0-9a-f]\{32\}\)$/\1/p' <<<"$LOG")"
+  [[ -n "$token" ]] &&
+    [[ "$(grep -A 1 -xF "::stop-commands::$token" <<<"$LOG")" == "::stop-commands::$token"$'\n'"::warning::from yarn" ]] &&
+    grep -qxF "::$token::" <<<"$LOG"
+}
+run_publish no
+check "yarn pack's output is not read as workflow commands" yarn_output_quoted
+run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc
+check "yarn npm publish's output is not read as workflow commands" yarn_output_quoted
+
 run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc PUBLISH_NPM_TAG='beta tag'
 check "npm-tag is passed as one argument" \
   published_with 'yarn npm publish --tag beta\ tag --staged --provenance [token=]'
@@ -226,6 +241,25 @@ run_main
 check "polyrepo with an npm lookup error: fails" failed_with "failed with exit code 1"
 : >"$WORK/published"
 
+# Names and versions from the repository are validated before they are
+# printed or used.
+no_injected_command() {
+  ! grep -q '^::warning::injected' <<<"$LOG"
+}
+jq -n '{name: "@test/npm-publish-modes", version: "1.2.3\n::warning::injected"}' >"$PKG/package.json"
+run_main
+check "invalid version: fails" failed_with "Invalid version for package @test/npm-publish-modes"
+check "invalid version: not printed as a workflow command" no_injected_command
+jq -n '{name: "@test/x\n::warning::injected", version: "1.2.3"}' >"$PKG/package.json"
+run_main
+check "invalid name: fails" failed_with "Invalid package name"
+check "invalid name: not printed as a workflow command" no_injected_command
+echo '{"name": "@test/npm-publish-modes", "version": "1.2.3-beta.1+build.5"}' >"$PKG/package.json"
+run_main
+check "prerelease version with build metadata is accepted" \
+  bash -c "(($STATUS == 0)) && grep -q 'yarn pack' '$WORK/shim.log'"
+echo '{"name": "@test/npm-publish-modes", "version": "1.2.3"}' >"$PKG/package.json"
+
 # main.sh in a monorepo, whose public workspaces Yarn lists as c, a and b. b
 # is on npm at its version.
 MONO="$WORK/mono"
@@ -257,6 +291,13 @@ check "monorepo: pending workspaces are packed in the order Yarn lists them" pac
 
 MAIN_DIR="$MONO" run_main SHIM_WORKSPACES="$mono_workspaces" DRY_RUN=false
 check "monorepo: the first failure stops the remaining workspaces" stopped_after_c
+
+# A name with a space and a quote reaches needs-publish.sh whole, which
+# rejects it.
+echo '{"name": "@test/it'"'"'s a", "version": "1.0.0"}' >"$MONO/packages/a/package.json"
+MAIN_DIR="$MONO" run_main SHIM_WORKSPACES="$mono_workspaces"
+check "monorepo: a name with a space and a quote is rejected whole" failed_with "Invalid package name: @test/it\\'s\\ a"
+echo '{"name": "@test/a", "version": "1.0.0"}' >"$MONO/packages/a/package.json"
 : >"$WORK/published"
 
 rm -f "$TARBALL" "$PACK_DIR"/*.tgz

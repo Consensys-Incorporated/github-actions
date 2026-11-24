@@ -38,6 +38,20 @@ fi
 : "${PACK_DIR:?PACK_DIR must be set}"
 YARN_NPM_AUTH_TOKEN="${YARN_NPM_AUTH_TOKEN:-}"
 
+# Runs a command with workflow commands in its output turned off. Yarn prints
+# the names of the packed files, which the repository controls, so a file name
+# could otherwise start a line with `::`.
+run_quoted() {
+  local token status=0
+  token="$(openssl rand -hex 16)"
+  echo "::stop-commands::$token"
+  "$@" || status=$?
+  echo "::$token::"
+  return "$status"
+}
+
+# main.sh runs this script only for a package whose name and version
+# needs-publish.sh validated.
 package_version="$(jq --raw-output .version package.json)"
 if [[ "$package_version" == "0.0.0" ]]; then
   echo "Version is 0.0.0. Not publishing."
@@ -86,11 +100,11 @@ else
 fi
 
 if [[ "$DRY_RUN" != "true" ]]; then
-  "${publish_cmd[@]}"
+  run_quoted "${publish_cmd[@]}"
   exit 0
 fi
 
-yarn pack --out "$PACK_DIR/%s-%v.tgz"
+run_quoted yarn pack --out "$PACK_DIR/%s-%v.tgz"
 
 # Yarn's %s is the package name with "/" replaced by "-"; a scope's "@" stays.
 tarball="$PACK_DIR/${package_name//\//-}-$package_version.tgz"
