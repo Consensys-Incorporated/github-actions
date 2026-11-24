@@ -3,8 +3,9 @@
 #
 # Decides whether HEAD is a release commit: the root package.json version
 # differs from the one at BEFORE, and, if COMMIT_STARTS_WITH is set, the commit
-# message starts with one of its comma-separated prefixes (with "[version]"
-# replaced by the new version). Prefixes are matched literally.
+# message starts with one of its prefixes, separated by commas or newlines
+# (with "[version]" replaced by the new version). Prefixes are matched
+# literally.
 #
 # Environment:
 #   BEFORE: the commit to compare with (required)
@@ -49,8 +50,16 @@ if [[ -n "$COMMIT_STARTS_WITH" ]]; then
   fi
 
   match_found=false
-  IFS=',' read -ra raw_prefixes <<<"$COMMIT_STARTS_WITH"
+  # Prefixes are separated by commas or newlines (a YAML block scalar), with
+  # surrounding whitespace trimmed. Empty prefixes are ignored; one would
+  # match every commit.
+  mapfile -t raw_prefixes < <(tr ',' '\n' <<<"$COMMIT_STARTS_WITH")
   for raw_prefix in "${raw_prefixes[@]}"; do
+    raw_prefix="${raw_prefix#"${raw_prefix%%[![:space:]]*}"}"
+    raw_prefix="${raw_prefix%"${raw_prefix##*[![:space:]]}"}"
+    if [[ -z "$raw_prefix" ]]; then
+      continue
+    fi
     # The replacement is quoted, so a "&" in the version is not special.
     prefix="${raw_prefix//\[version\]/"$version_after"}"
     # Quoted, so the prefix is matched literally rather than as a pattern.

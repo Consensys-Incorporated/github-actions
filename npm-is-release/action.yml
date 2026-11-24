@@ -9,9 +9,10 @@ description: >-
 inputs:
   commit-starts-with:
     description: >-
-      Comma-separated prefixes, one of which the commit message must start
-      with. `[version]` is replaced by the new version. Matched literally.
-      If empty, a version change alone makes a release.
+      Prefixes separated by commas or newlines, one of which the commit
+      message must start with. Surrounding whitespace is trimmed and empty
+      prefixes are ignored. `[version]` is replaced by the new version.
+      Matched literally. If empty, a version change alone makes a release.
     required: false
     default: ''
   commit-message:
