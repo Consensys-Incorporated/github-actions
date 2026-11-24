@@ -5,6 +5,10 @@
 # in a monorepo, tags HEAD with <name>@<version> for each released package and
 # pushes those tags.
 #
+# Safe to re-run after a partial failure: an existing release at the release
+# commit is kept, and existing tags at the release commit are pushed again
+# (a no-op on the remote). A release or tag at another commit fails.
+#
 # Environment:
 #   GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SERVER_URL (default https://github.com)
 #   RELEASE_COMMIT_ID: the commit to create the release at; must be HEAD
@@ -51,10 +55,32 @@ if [[ "$RELEASE_MODE" == "monorepo" ]]; then
   fi
 fi
 
-gh release create "v$RELEASE_VERSION" \
-  --title "$RELEASE_VERSION" \
-  --notes-file "$notes_file" \
-  --target "$RELEASE_COMMIT_ID"
+# Local tags left by an earlier attempt must be at the release commit. Checked
+# before the release is created.
+for tag in "${tags[@]}"; do
+  if existing="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")" && [[ "$existing" != "$head" ]]; then
+    echo "::error::Tag $tag already exists at $existing, not at the release commit $head."
+    exit 1
+  fi
+done
+
+release_tag="v$RELEASE_VERSION"
+error_file="$RELEASE_DIR/gh-error"
+if target="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" --jq .target_commitish 2>"$error_file")"; then
+  if [[ "$target" != "$RELEASE_COMMIT_ID" ]]; then
+    echo "::error::Release $release_tag already exists with target '$target', not the release commit $RELEASE_COMMIT_ID."
+    exit 1
+  fi
+  echo "Release $release_tag already exists at $RELEASE_COMMIT_ID: not creating it again."
+elif grep -qF "HTTP 404" "$error_file"; then
+  gh release create "$release_tag" \
+    --title "$RELEASE_VERSION" \
+    --notes-file "$notes_file" \
+    --target "$RELEASE_COMMIT_ID"
+else
+  echo "::error::Could not look up release $release_tag: $(cat "$error_file")"
+  exit 1
+fi
 
 if ((${#tags[@]} > 0)); then
   git config user.name github-actions
@@ -62,9 +88,15 @@ if ((${#tags[@]} > 0)); then
 
   refspecs=()
   for tag in "${tags[@]}"; do
-    git tag -- "$tag" HEAD
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+      echo "Tag $tag already exists at the release commit."
+    else
+      git tag -- "$tag" HEAD
+    fi
     refspecs+=("refs/tags/$tag")
   done
+  # Pushing a tag that the remote already has at the same commit succeeds
+  # without changes; one that it has at another commit is rejected.
   server_url="${GITHUB_SERVER_URL:-https://github.com}"
   git push "https://x-access-token:${GH_TOKEN}@${server_url#https://}/${GITHUB_REPOSITORY}.git" "${refspecs[@]}"
 fi

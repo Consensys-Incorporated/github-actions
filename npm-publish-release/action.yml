@@ -5,7 +5,8 @@ description: >-
   Create a GitHub release v<root version> with notes from the changelog. In a
   monorepo with independently versioned packages, release each public package
   whose <name>@<version> tag does not exist yet, and push those tags. The
-  checked-out HEAD must be github.sha.
+  checked-out HEAD must be github.sha. Safe to re-run: an existing release and
+  tags at that commit are kept.
 
 outputs:
   release-version:

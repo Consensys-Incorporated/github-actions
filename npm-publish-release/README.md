@@ -57,10 +57,17 @@ variable.
      At least one package must be released.
    - The notes are a `## <name> <version>` section per released package, in workspace order,
      each followed by the body of its changelog's `## [<version>]` section, which must exist.
-4. Fail if `HEAD` is not `github.sha`.
+4. Fail if `HEAD` is not `github.sha`, or if a `<name>@<version>` tag for a released package
+   already exists locally at another commit.
 5. Create the release with `gh release create v<version> --title <version> --notes-file …
-   --target <github.sha>`.
-6. Monorepo: tag `HEAD` with `<name>@<version>` for each released package and push those tags.
+   --target <github.sha>`. If release `v<version>` already exists with target `github.sha`, skip
+   this step and say so in the log; if it exists with another target, fail.
+6. Monorepo: tag `HEAD` with `<name>@<version>` for each released package (keeping such tags
+   that already exist at `HEAD`) and push those tags. The push fails if the remote has one of
+   them at another commit.
+
+Because of steps 5 and 6, re-running the action after the release was created but the tag push
+failed creates and pushes the tags without creating the release again.
 
 A changelog section's body is the lines after its `## [<version>]` heading, up to the next `## `
 heading or the first link reference definition, with blank lines trimmed at both ends.
@@ -80,6 +87,9 @@ heading or the first link reference definition, with blank lines trimmed at both
 - The notes are passed with `--notes-file` instead of as an argument.
 - The action fails before creating anything if `HEAD` is not `github.sha`. Upstream created the
   release at `github.sha` and tagged `HEAD` regardless.
+- An existing release `v<version>` at `github.sha` is kept instead of failing `gh release
+  create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
+  can finish a release whose tag push failed.
 - Only the new tags are pushed, by name, instead of `git push --tags`, to `GITHUB_SERVER_URL`
   instead of a hard-coded `github.com`.
 
