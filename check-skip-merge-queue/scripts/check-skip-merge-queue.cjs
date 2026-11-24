@@ -18,7 +18,9 @@
  * @param {string} args.headRef - e.g. refs/heads/gh-readonly-queue/main/pr-123-<sha>.
  */
 async function getPullRequestDetails({ github, context, core, headRef }) {
-  const match = headRef.match(/\/pr-([0-9]+)-/u);
+  // Anchored at the end: the base branch name, which comes first, may itself
+  // contain "/pr-<n>-".
+  const match = headRef.match(/\/pr-([0-9]+)-[0-9a-f]{40}(?:[0-9a-f]{24})?$/u);
   if (!match) {
     core.setFailed(`Could not extract pull request number from head ref: "${headRef}".`);
     return;
