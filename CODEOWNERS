@@ -1,3 +1,5 @@
 *         @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
 
 .github/workflows/  @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
+check-skip-merge-queue/  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
+.github/workflows/test_check-skip-merge-queue.yml  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
