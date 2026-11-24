@@ -271,6 +271,9 @@ jq -n '{name: "@test/npm-publish-modes", version: "1.2.3\n::warning::injected"}'
 run_main
 check "invalid version: fails" failed_with "Invalid version for package @test/npm-publish-modes"
 check "invalid version: not printed as a workflow command" no_injected_command
+echo '{"name": "@test/npm-publish-modes", "version": "v1.2.3"}' >"$PKG/package.json"
+run_main
+check "version with a v prefix: fails" failed_with "Invalid version for package @test/npm-publish-modes: v1.2.3"
 jq -n '{name: "@test/x\n::warning::injected", version: "1.2.3"}' >"$PKG/package.json"
 run_main
 check "invalid name: fails" failed_with "Invalid package name"
