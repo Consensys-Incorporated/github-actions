@@ -95,8 +95,8 @@ fails the action before anything else runs.
    - on npm: with OIDC, `yarn npm publish --tag <tag> --staged` (plus `--provenance` for a public
      repository); without, pack (or fail if `dry-run: false`). The token is never used here.
    An npm lookup error other than "not found" fails the action, as does a package name that isn't
-   a valid npm name, a version that isn't a semantic version, or a workspace location with a
-   control character.
+   a valid npm name, a version that isn't a strict semantic version (`v1.2.3` fails), or a
+   workspace location with a control character.
 4. **Dry run**: tarballs are written to `$RUNNER_TEMP/npm-publish-packages`. Log each tarball's
    SHA-1 and integrity to the step summary, write a `pkdiff` report against `<name>@latest`, and
    upload the tarballs and reports as the
@@ -144,6 +144,9 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 - `.corepack.env` is ignored: Corepack reads `COREPACK_*` variables from that file in the
   repository, and `COREPACK_ENABLE_UNSAFE_CUSTOM_URLS=1` there lets the `packageManager` field name
   any URL as the Yarn to download and run.
+- Versions must be strict semantic versions (`MAJOR.MINOR.PATCH`, with optional prerelease and
+  build metadata). A version with a `v` prefix, such as `v1.2.3`, fails the action. Upstream
+  doesn't check versions.
 - The action's steps set `BASH_ENV`, `ENV` and `NODE_OPTIONS` to empty values, so that an earlier
   step can't make them run code through `$GITHUB_ENV`.
 - With `RUNNER_DEBUG`, `main.sh`, `publish.sh` and `needs-publish.sh` don't trace commands
