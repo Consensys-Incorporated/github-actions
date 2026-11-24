@@ -1,84 +1,152 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Determines the release version, the released packages (monorepo) and the
+# release notes, in the current directory. Runs no Yarn, npm or Node.js.
+#
+# Environment:
+#   GH_TOKEN, GITHUB_REPOSITORY: for the tag lookups
+#   RELEASE_DIR: directory for notes.md and packages.tsv
+#
+# Outputs (to $GITHUB_OUTPUT): release-version, mode (monorepo|polyrepo)
+# Exports (to $GITHUB_ENV): RELEASE_NOTES
+# Files: $RELEASE_DIR/notes.md; $RELEASE_DIR/packages.tsv (monorepo:
+#   "<name>\t<path>\t<version>" per released package, in workspace order)
 
-set -e
-set -u
-set -o pipefail
+set -euo pipefail
 
-if [ "${RUNNER_DEBUG:-}" = "1" ]; then
+if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
   set -x
 fi
 
-# ============================================================================
-# This script determines which packages are part of the current release in a
-# monorepo. A package is considered part of the release if no git tag of the
-# form "<name>@<version>" already exists for its current manifest version.
-# Private packages and packages at version "0.0.0" are skipped.
-#
-# Tag existence is queried via the GitHub API, so the workflow does not need
-# to fetch tags locally or use a deep checkout.
-# ============================================================================
+# shellcheck source=SCRIPTDIR/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# JSON string of packages to publish
-# shape is as follows:
-# {
-#   "packages": {
-#     "@metamask/snaps-cli": {
-#       "name": "@metamask/snaps-cli",
-#       "path": "packages/cli",
-#       "version": "0.19.2"
-#     },
-#     "@metamask/snap-controllers": {
-#       "name": "@metamask/snap-controllers",
-#       "path": "packages/controllers",
-#       "version": "0.19.2"
-#     }
-#   }
-# }
-toPublish="{\"packages\":{"
-# store initial length of toPublish
-len="${#toPublish}"
+mkdir -p "$RELEASE_DIR"
+notes_file="$RELEASE_DIR/notes.md"
+packages_file="$RELEASE_DIR/packages.tsv"
+: >"$packages_file"
 
-# Path to a file containing the output of
-# `yarn workspaces list --verbose --json` (one JSON object per line). It is
-# produced by a separate step, so this script does not need to call Yarn.
-if [ -z "${WORKSPACES_FILE:-}" ]; then
-  echo "::error::WORKSPACES_FILE must be set to the path of the workspaces JSON file."
+release_version="$(jq -r '.version // empty' package.json)"
+if ! is_semver "$release_version"; then
+  echo "::error::The root package.json version '$release_version' is not a valid SemVer version."
   exit 1
 fi
 
-if [ ! -f "$WORKSPACES_FILE" ]; then
-  echo "::error::Workspaces file not found: $WORKSPACES_FILE"
+repository_url="$(jq -r '.repository | objects | .url // empty' package.json)"
+if [[ "$repository_url" != https://* ]]; then
+  echo "::error::The root package.json repository.url '$repository_url' must be an https: URL."
   exit 1
 fi
+repository_url="${repository_url%.git}"
+echo "Repository: $repository_url"
 
-workspaces=$(<"$WORKSPACES_FILE")
+echo "release-version=$release_version" >>"$GITHUB_OUTPUT"
 
-# Repository to look up release tags in. Defaults to the current workflow's
-# repository; can be overridden via the RELEASE_TAGS_REPOSITORY env var
-# (used by the integration tests to point at a fixture repo, since GitHub
-# Actions does not allow overriding GITHUB_REPOSITORY at the step level).
-TAGS_REPOSITORY="${RELEASE_TAGS_REPOSITORY:-$GITHUB_REPOSITORY}"
-
-while read -r location name; do
-  MANIFEST="$location/package.json"
-  read -r PRIVATE CURRENT_PACKAGE_VERSION < <(jq --raw-output '.private, .version' "$MANIFEST" | xargs)
-  if [[ "$PRIVATE" != "true" && "$CURRENT_PACKAGE_VERSION" != '0.0.0' ]]; then
-    # Skip the package if a release tag already exists for its current
-    # version. A non-existent tag (404) means this version has not been
-    # released yet, so include it.
-    if ! gh api "repos/$TAGS_REPOSITORY/git/ref/tags/$name@$CURRENT_PACKAGE_VERSION" --silent 2>/dev/null; then
-      toPublish+="\"$name\":{\"name\":"\"$name\"",\"path\":"\"$location\"",\"version\":"\"$CURRENT_PACKAGE_VERSION"\"},"
-    fi
+if [[ "$(jq 'has("workspaces")' package.json)" != "true" ]]; then
+  echo "No workspaces in package.json: polyrepo release."
+  echo "mode=polyrepo" >>"$GITHUB_OUTPUT"
+  if [[ ! -f CHANGELOG.md ]]; then
+    echo "::error::CHANGELOG.md not found."
+    exit 1
   fi
-done< <(echo "$workspaces" | jq --raw-output '"\(.location) \(.name)"')
+  if ! changelog_section CHANGELOG.md "$release_version" >"$notes_file"; then
+    echo "::error::CHANGELOG.md has no section for $release_version."
+    exit 1
+  fi
+else
+  echo "Workspaces in package.json: monorepo release."
+  echo "mode=monorepo" >>"$GITHUB_OUTPUT"
 
-# if the length of toPublish is greater than the initial length
-# trim off the last char (,)
-if [[ "${#toPublish}" -gt "$len" ]]; then
-  toPublish=${toPublish::-1}
+  if [[ ! -f release.config.json ]]; then
+    echo "::error::release.config.json not found. Monorepos must set {\"versioningStrategy\": \"independent\"}; fixed versioning is not supported."
+    exit 1
+  fi
+  strategy="$(jq -r '.versioningStrategy // empty' release.config.json)"
+  if [[ "$strategy" != "independent" ]]; then
+    echo "::error::release.config.json versioningStrategy is '$strategy'. Only 'independent' is supported."
+    exit 1
+  fi
+
+  workspaces="$(list_workspaces .)"
+
+  declare -A seen_names=()
+  while IFS= read -r location; do
+    manifest="$location/package.json"
+    name="$(jq -r '.name // empty' "$manifest")"
+    private="$(jq -r '.private' "$manifest")"
+    version="$(jq -r '.version // empty' "$manifest")"
+
+    if [[ -n "$name" ]]; then
+      if [[ -n "${seen_names[$name]:-}" ]]; then
+        echo "::error::Duplicate workspace name $name: $location conflicts with ${seen_names[$name]}."
+        exit 1
+      fi
+      seen_names[$name]="$location"
+    fi
+
+    if [[ "$private" == "true" || "$version" == "0.0.0" ]]; then
+      continue
+    fi
+    if [[ -z "$name" ]]; then
+      echo "::error::$manifest has no name."
+      exit 1
+    fi
+    if ! is_semver "$version"; then
+      echo "::error::$manifest version '$version' is not a valid SemVer version."
+      exit 1
+    fi
+
+    # Any lookup error is treated as "not released yet", as upstream does.
+    if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$name@$version" --silent 2>/dev/null; then
+      echo "Skipping $name@$version: already released."
+    else
+      echo "Releasing $name@$version ($location)."
+      printf '%s\t%s\t%s\n' "$name" "$location" "$version" >>"$packages_file"
+    fi
+  done <<<"$workspaces"
+
+  if [[ ! -s "$packages_file" ]]; then
+    echo "::error::No packages to release: every public package's current version is already tagged."
+    exit 1
+  fi
+
+  : >"$notes_file"
+  first=true
+  while IFS=$'\t' read -r name location version; do
+    changelog="$location/CHANGELOG.md"
+    if [[ ! -f "$changelog" ]]; then
+      echo "::error::$changelog not found."
+      exit 1
+    fi
+    if ! section="$(changelog_section "$changelog" "$version")"; then
+      echo "::error::$changelog has no section for $version."
+      exit 1
+    fi
+    if [[ "$first" == false ]]; then
+      printf '\n' >>"$notes_file"
+    fi
+    first=false
+    printf '## %s %s\n\n%s\n' "$name" "$version" "$section" >>"$notes_file"
+  done <"$packages_file"
 fi
 
-RELEASE_PACKAGES="$toPublish}}"
+if [[ -z "$(tr -d '[:space:]' <"$notes_file")" ]]; then
+  echo "::error::The release notes are empty."
+  exit 1
+fi
 
-# echo "$RELEASE_PACKAGES"
-echo "RELEASE_PACKAGES=$RELEASE_PACKAGES" >> "$GITHUB_OUTPUT"
+echo "Release notes:"
+cat "$notes_file"
+
+# Export the notes with a random delimiter that cannot occur in them.
+delimiter="EOF_$(openssl rand -hex 16)"
+if grep -qF "$delimiter" "$notes_file"; then
+  echo "::error::Release notes contain the delimiter."
+  exit 1
+fi
+{
+  echo "RELEASE_NOTES<<$delimiter"
+  cat "$notes_file"
+  echo "$delimiter"
+} >>"$GITHUB_ENV"
