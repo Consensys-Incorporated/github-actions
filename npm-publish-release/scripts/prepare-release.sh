@@ -17,14 +17,31 @@
 
 set -euo pipefail
 
-if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
-  set -x
-fi
-
 # shellcheck source=SCRIPTDIR/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 mkdir -p "$RELEASE_DIR"
+
+# print_trace: prints the debug trace with workflow commands stopped.
+print_trace() {
+  local token
+  set +x
+  token="$(openssl rand -hex 16)"
+  echo "Trace:"
+  echo "::stop-commands::$token"
+  cat "$RELEASE_DIR/trace"
+  echo "::$token::"
+}
+
+# The trace shows manifest and changelog text with its raw newlines, so a line
+# of it could run a workflow command. With debug logging it is written to a
+# file and printed when the script exits, with workflow commands stopped.
+if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
+  exec {trace_fd}>"$RELEASE_DIR/trace"
+  BASH_XTRACEFD="$trace_fd"
+  trap print_trace EXIT
+  set -x
+fi
 notes_file="$RELEASE_DIR/notes.md"
 packages_file="$RELEASE_DIR/packages.tsv"
 : >"$packages_file"

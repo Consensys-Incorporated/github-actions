@@ -588,6 +588,24 @@ test_workflow_commands() {
   fi
 }
 
+# With debug logging (RUNNER_DEBUG=1), the trace shows changelog text with its
+# raw newlines, so it must not reach the log where the runner reads commands.
+test_debug_trace() {
+  local dir="$WORK/debug-trace" commands
+  (
+    monorepo_fixture "$dir"
+    changelog packages/a/CHANGELOG.md 1.1.0 $'- Entry\n::warning::from a line\n##[warning]legacy' 1.0.0 '- Initial release'
+    commit_changes
+  )
+  RUNNER_DEBUG=1 run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS == 0)) && [[ -z "$commands" ]] && grep -qF 'changelog_section packages/a/CHANGELOG.md 1.1.0' <<<"$PREPARE_LOG"; then
+    pass "debug trace: no workflow commands from release notes, trace still printed"
+  else
+    fail "debug trace: no workflow commands from release notes, trace still printed" "status $PREPARE_STATUS" "commands: $commands"
+  fi
+}
+
 # expect_uncommitted_failure <name> <dir> <pattern>: runs prepare-release.sh
 # in <dir> and expects it to fail with <pattern> before exporting anything.
 expect_uncommitted_failure() {
@@ -897,6 +915,7 @@ test_nothing_to_release
 test_lookup_error
 test_config_errors
 test_workflow_commands
+test_debug_trace
 test_uncommitted
 test_head_mismatch
 test_rerun

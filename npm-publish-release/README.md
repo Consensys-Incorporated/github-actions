@@ -142,7 +142,9 @@ heading or the first link reference definition, with blank lines trimmed at both
   validated before they are printed; other values from the repository are printed with `%`, CR
   and LF percent-encoded, so they stay on one line, and in plain log lines also with `#`, `[` and
   `]` percent-encoded, since the runner reads the older `##[<command>]` form anywhere in a line.
-  Workspace paths with control characters fail.
+  Workspace paths with control characters fail. With debug logging (`RUNNER_DEBUG`), the trace of
+  the step that reads the repository, which shows its text with raw newlines, is printed when the
+  step ends, also between stop-commands markers.
 - `RELEASE_NOTES` is exported with a random delimiter, so changelog text cannot end the value
   early or set other variables.
 
