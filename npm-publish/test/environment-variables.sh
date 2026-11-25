@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tests that scripts/environment.sh unsets the job's YARN_* variables, which
-# would otherwise override the configuration file the action writes (e.g.
-# redirect publishing to another registry), and keeps only the ones the action
-# sets itself; and that it stops Corepack from reading COREPACK_* variables
-# from the repository's `.corepack.env`.
+# Tests that scripts/environment.sh unsets the job's YARN_* variables, in any
+# case (Yarn matches their names case-insensitively), which would otherwise
+# override the configuration file the action writes (e.g. redirect publishing
+# to another registry), and keeps only the ones the action sets itself; and
+# that it stops Corepack from reading COREPACK_* variables from the
+# repository's `.corepack.env`.
 #
 # Usage: test/environment-variables.sh
 
@@ -17,13 +18,13 @@ failures=0
 
 # yarn_environment [VAR=value...]: sources environment.sh with the given
 # variables and nothing else in the environment, under the same shell options
-# as the action's scripts, and prints the YARN_* variables left, sorted, or an
-# error if environment.sh fails.
+# as the action's scripts, and prints the YARN_* variables left, in any case,
+# sorted, or an error if environment.sh fails.
 yarn_environment() {
   # shellcheck disable=SC2016 # Expanded by the inner shell.
   env -i PATH="$PATH" "$@" bash -euo pipefail -c '
     source "$1"
-    env | grep "^YARN_" | LC_ALL=C sort || true
+    env | grep -i "^yarn_" | LC_ALL=C sort || true
   ' _ "$ENVIRONMENT_SCRIPT" || echo "environment.sh failed with exit code $?"
 }
 
@@ -54,6 +55,13 @@ hostile=(
   YARN_YARN_PATH=.yarn/releases/canary.cjs
   YARN_PLUGINS=.yarn/plugins/canary.cjs
   YARN_CACHE_FOLDER=/tmp/yarn-cache
+  # Yarn reads these too: it matches names case-insensitively.
+  yarn_rc_filename=.yarnrc.yml
+  yarn_npm_publish_registry=https://example.invalid
+  Yarn_Npm_Registry_Server=https://example.invalid
+  yarn_https_proxy=http://example.invalid
+  yarn_npm_auth_token=other-token
+  yarn_ignore_path=0
 )
 
 kept=(

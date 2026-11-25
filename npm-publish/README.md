@@ -77,11 +77,11 @@ fails the action before anything else runs.
 
 ## Behavior
 
-1. **Sanitize** (`scripts/sanitize.sh`), before any Yarn command: unset `YARN_*` variables (except
-   the action's own), stop Corepack from reading a `.corepack.env` file (`COREPACK_ENV_FILE=0`),
-   point the action's own Yarn steps at a minimal generated configuration outside the checkout
-   (`enableScripts: false`, the npm registry only, no plugins), ignore `yarnPath`, delete
-   `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
+1. **Sanitize** (`scripts/sanitize.sh`), before any Yarn command: unset `YARN_*` variables, in
+   any case (except the action's own), stop Corepack from reading a `.corepack.env` file
+   (`COREPACK_ENV_FILE=0`), point the action's own Yarn steps at a minimal generated configuration
+   outside the checkout (`enableScripts: false`, the npm registry only, no plugins), ignore
+   `yarnPath`, delete `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
    `https://registry.npmjs.org`, reject workspaces other than the root that set `packageManager` or
    `devEngines.packageManager`, and delete `prepublish`, `prepublishOnly`, `prepack` and `postpack`
    scripts from every workspace, private ones included.
@@ -163,6 +163,11 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
   Yarn 1 would get it: Yarn 1 has no `npm` command and runs `yarn npm publish` as the workspace's
   own `npm` script, with the token or OIDC in its environment. Upstream checks the Yarn version
   only at the root.
+- `YARN_*` variables are unset in any case, not just in upper case: Yarn matches their names
+  case-insensitively, so `yarn_rc_filename=.yarnrc.yml` set through `$GITHUB_ENV` would load the
+  repository's `.yarnrc.yml` and its plugins, and `yarn_npm_publish_registry` would redirect the
+  publish. Only the exact names `YARN_IGNORE_PATH`, `YARN_NPM_AUTH_TOKEN` and `YARN_RC_FILENAME`
+  are kept.
 - `.corepack.env` is ignored: Corepack reads `COREPACK_*` variables from that file in the
   repository, and `COREPACK_ENABLE_UNSAFE_CUSTOM_URLS=1` there lets the `packageManager` field name
   any URL as the Yarn to download and run.
@@ -215,17 +220,18 @@ installed, that an invalid `dry-run` fails, that invalid names and versions fail
 as workflow commands, that Yarn's output is wrapped in `::stop-commands::`, that `RUNNER_DEBUG`
 doesn't print the token, and that a monorepo's workspaces are handled in Yarn's order and stop at
 the first failure.
-`test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
-except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
-the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
-real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, a dry run that writes
-a `pkdiff` report for a package on npm (with `npm_config_install_strategy=linked` set in
-`$GITHUB_ENV`), failures without credentials, a foreign registry, old Yarn, a workspace that names Yarn 1 through
-`packageManager` or `devEngines.packageManager` (rejected by the sanitize step), an invalid `dry-run`
-(rejected before the sanitize step), a polyrepo, a project whose plugin, `yarnPath`, lifecycle
-scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, as would `BASH_ENV` set in
-`$GITHUB_ENV`, that a dry run with `npm_config_registry` and a scope's registry set to an
-unreachable host in `$GITHUB_ENV` still looks packages up on, and installs `pkdiff` from,
-`https://registry.npmjs.org`, that `YARN_*` overrides such as `YARN_NPM_REGISTRY_SERVER` don't
-change the configuration the Publish step reads, and that `YARN_RC_FILENAME` isn't set in the
-caller's later steps.
+`test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable,
+in any case, except the action's own, and that real Corepack then ignores a `.corepack.env` that
+allows a URL as the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs
+the action with real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, a dry
+run that writes a `pkdiff` report for a package on npm (with `npm_config_install_strategy=linked`
+set in `$GITHUB_ENV`), failures without credentials, a foreign registry, old Yarn, a workspace that
+names Yarn 1 through `packageManager` or `devEngines.packageManager` (rejected by the sanitize
+step), an invalid `dry-run` (rejected before the sanitize step), a polyrepo, a project whose plugin,
+`yarnPath`, lifecycle scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, as would
+`BASH_ENV` set in `$GITHUB_ENV`, that a dry run with `npm_config_registry` and a scope's registry
+set to an unreachable host in `$GITHUB_ENV` still looks packages up on, and installs `pkdiff` from,
+`https://registry.npmjs.org`, that `YARN_*` overrides such as `YARN_NPM_REGISTRY_SERVER`, and
+lowercase ones such as `yarn_npm_publish_registry`, don't change the configuration the Publish step
+reads, that `yarn_rc_filename` doesn't load the project's `.yarnrc.yml` and its plugin, and that
+`YARN_RC_FILENAME` isn't set in the caller's later steps.

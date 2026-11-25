@@ -5,7 +5,9 @@
 #
 # `YARN_*` environment variables override the configuration file the action
 # controls (e.g. YARN_NPM_PUBLISH_REGISTRY), and the caller's job may set them.
-# Unset all of them except the ones the action itself sets or needs.
+# Yarn matches their names case-insensitively, so `yarn_rc_filename` would
+# load the repository's `.yarnrc.yml`. Unset all of them, in any case, except
+# the exact names the action itself sets or needs.
 #
 # `yarn` is Corepack's shim, and Corepack reads `COREPACK_*` variables from a
 # `.corepack.env` file in the repository as well as from the environment. In
@@ -14,7 +16,7 @@
 # doesn't read the file. COREPACK_* variables set by the caller's job, such as
 # a mirror's COREPACK_NPM_REGISTRY, are left alone.
 
-for name in $(compgen -e | grep '^YARN_' || true); do
+for name in $(compgen -e | grep -i '^yarn_' || true); do
   case "$name" in
     YARN_NPM_AUTH_TOKEN | YARN_RC_FILENAME | YARN_IGNORE_PATH) ;;
     *) unset "$name" ;;
