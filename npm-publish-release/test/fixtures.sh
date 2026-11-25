@@ -519,6 +519,17 @@ test_config_errors() {
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "invalid package name fails" "is not a valid npm package name"
 
+  # Valid npm names that Git does not accept in a tag name.
+  local i=0 name
+  for name in '@octo/a~x' '@octo/a..b' '@x.lock/y'; do
+    i=$((i + 1))
+    dir="$WORK/bad-ref-name-$i"
+    (monorepo_fixture "$dir" && pkg packages/a "$name" 1.1.0 && commit_changes)
+    run_prepare "$dir" "$dir.existing-tags"
+    expect_prepare_failure "package name $name that is not a valid Git tag name fails" \
+      "$name@1.1.0 is not a valid Git tag name"
+  done
+
   dir="$WORK/empty-section"
   (monorepo_fixture "$dir" && printf '## [Unreleased]\n\n## [2.0.0]\n\n## [1.0.0]\n\n- Initial release\n' >packages/b/CHANGELOG.md && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"

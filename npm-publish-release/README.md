@@ -106,8 +106,9 @@ heading or the first link reference definition, with blank lines trimmed at both
   blank line after `###` headings. CRLF changelogs are read.
 - An empty changelog section for a released package fails, as an empty root section does.
 - Workspace listing supports `<dir>/*` and literal patterns only, and fails on others instead of
-  globbing them. Workspace names must be valid npm package names, and workspace paths must not
-  contain control characters.
+  globbing them. Workspace names must be valid npm package names, `<name>@<version>` must be a
+  valid Git tag name (checked before anything is created), and workspace paths must not contain
+  control characters.
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
 - The notes are passed with `--notes-file` instead of as an argument.

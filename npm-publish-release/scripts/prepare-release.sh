@@ -158,6 +158,12 @@ else
       echo "::error::$manifest name '$(escape_data "$name")' is not a valid npm package name."
       exit 1
     fi
+    # Some valid npm names (with "~" or "..", or a scope ending in ".lock")
+    # make tags Git rejects, which would fail only after the release exists.
+    if ! git check-ref-format "refs/tags/$name@$version"; then
+      echo "::error::$manifest: $name@$version is not a valid Git tag name."
+      exit 1
+    fi
 
     if tag_exists "$name@$version"; then
       echo "Skipping $name@$version: already released."
