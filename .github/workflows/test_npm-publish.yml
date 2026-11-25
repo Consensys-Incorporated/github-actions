@@ -1,0 +1,358 @@
+name: Test npm-publish
+
+on:
+  push:
+    paths:
+      - 'npm-publish/**'
+      - '.github/workflows/test_npm-publish.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Under $RUNNER_TEMP.
+  PACK_DIR_NAME: npm-publish-packages
+  NEW_PACKAGE_TARBALL: '@consensys-incorporated-test-npm-publish-fixture-a-1.0.0.tgz'
+
+jobs:
+  # publish.sh mode selection and main.sh checks, with yarn and npm shimmed,
+  # and environment.sh's unsetting of YARN_* variables.
+  modes:
+    name: Publish modes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: npm-publish/test/publish-modes.sh
+      - run: npm-publish/test/environment-variables.sh
+
+  # The remaining jobs run the action with real Yarn against fixture projects
+  # built in the workspace root. None has id-token: write, so no OIDC.
+  dry-run:
+    name: Dry run (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no credentials
+            kind: monorepo
+            dry-run: ''
+            npm-token: ''
+          - name: dry-run true with a token
+            kind: monorepo
+            dry-run: 'true'
+            npm-token: not-a-real-token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        env:
+          KIND: ${{ matrix.kind }}
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh "$KIND" "$GITHUB_WORKSPACE"
+      - name: Run action
+        id: action
+        uses: ./actions-repo/npm-publish
+        with:
+          dry-run: ${{ matrix.dry-run }}
+          npm-token: ${{ matrix.npm-token }}
+      - name: Assert only the new public package was packed
+        env:
+          DRY_RUN: ${{ steps.action.outputs.dry-run }}
+        run: |
+          pack_dir="$RUNNER_TEMP/$PACK_DIR_NAME"
+          ls -l "$pack_dir"
+          [[ "$DRY_RUN" == "true" ]]
+          test -f "$pack_dir/$NEW_PACKAGE_TARBALL"
+          # Already on npm at its version, private, and 0.0.0: not packed.
+          [[ "$(find "$pack_dir" -maxdepth 1 -name '*.tgz' | wc -l)" -eq 1 ]]
+      # The generated Yarn configuration applies only to the action's own
+      # steps, not to the caller's later ones.
+      - name: Assert YARN_RC_FILENAME is not set after the action
+        run: |
+          if [[ -n "${YARN_RC_FILENAME+set}" ]]; then
+            echo "::error::YARN_RC_FILENAME is set to '$YARN_RC_FILENAME'."
+            exit 1
+          fi
+
+  # pkdiff, installed from its lockfile, writes a report for a package that is
+  # on npm (report.sh ignores pkdiff's failures, so only the file shows that
+  # it ran).
+  report:
+    name: Dry run writes a pkdiff report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh existing "$GITHUB_WORKSPACE"
+      # With the linked strategy, `npm ci` would install pkdiff's
+      # dependencies under node_modules/.store, where pkdiff doesn't find
+      # diff2html; install-pkdiff.sh overrides it.
+      - name: Set npm_config_install_strategy in $GITHUB_ENV
+        run: echo "npm_config_install_strategy=linked" >>"$GITHUB_ENV"
+      - name: Run action
+        id: action
+        uses: ./actions-repo/npm-publish
+        with:
+          dry-run: true
+      - name: Assert the report was written
+        run: |
+          report="$RUNNER_TEMP/$PACK_DIR_NAME/left-pad-999.0.0.tgz.html"
+          test -s "$report"
+          grep -q 'left-pad' "$report"
+
+  no-credentials-fails:
+    name: dry-run false without credentials fails (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # monorepo: a package not on npm (needs a token).
+        # existing: a package on npm at another version (needs OIDC).
+        kind: [monorepo, existing]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        env:
+          KIND: ${{ matrix.kind }}
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh "$KIND" "$GITHUB_WORKSPACE"
+      - name: Run action
+        id: action
+        continue-on-error: true
+        uses: ./actions-repo/npm-publish
+        with:
+          dry-run: false
+      - name: Assert failure without packing
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          [[ "$OUTCOME" == "failure" ]]
+          [[ -z "$(find "$RUNNER_TEMP" -name '*.tgz')" ]]
+
+  rejected:
+    name: Rejected (${{ matrix.kind }}, dry-run ${{ matrix.dry-run }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # registry: publishConfig.registry points elsewhere.
+        # old-yarn: Yarn 4.15.0.
+        # invalid dry-run: rejected before anything runs.
+        include:
+          - kind: registry
+            dry-run: 'true'
+          - kind: old-yarn
+            dry-run: 'true'
+          - kind: monorepo
+            dry-run: 'yes'
+            before-sanitize: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        env:
+          KIND: ${{ matrix.kind }}
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh "$KIND" "$GITHUB_WORKSPACE"
+      - name: Run action
+        id: action
+        continue-on-error: true
+        uses: ./actions-repo/npm-publish
+        with:
+          dry-run: ${{ matrix.dry-run }}
+      - name: Assert failure
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          [[ "$OUTCOME" == "failure" ]]
+          [[ -z "$(find "$RUNNER_TEMP" -name '*.tgz')" ]]
+      - name: Assert the sanitize step did not run
+        if: ${{ matrix.before-sanitize }}
+        run: |
+          [[ -z "$(find "$(dirname "$GITHUB_WORKSPACE")" -maxdepth 1 -name '.yarnrc-*.yml')" ]]
+
+  polyrepo:
+    name: Polyrepo packs the root package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh polyrepo "$GITHUB_WORKSPACE"
+      - name: Run action
+        id: action
+        uses: ./actions-repo/npm-publish
+      - name: Assert the root package was packed
+        env:
+          DRY_RUN: ${{ steps.action.outputs.dry-run }}
+        run: |
+          [[ "$DRY_RUN" == "true" ]]
+          test -f "$RUNNER_TEMP/$PACK_DIR_NAME/@consensys-incorporated-test-npm-publish-fixture-root-1.0.0.tgz"
+
+  # No repository code runs: not the .yarnrc.yml plugin, not yarnPath, not
+  # lifecycle scripts, not bins that shadow the tools the action runs; and
+  # YARN_* variables from the job, and BASH_ENV from $GITHUB_ENV, do not
+  # apply.
+  sanitize:
+    name: Sanitizes Yarn configuration
+    runs-on: ubuntu-latest
+    env:
+      CANARY_DIR: /tmp/canary
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh canary "$GITHUB_WORKSPACE"
+      # As an earlier step in a caller's job could. The dry run's npm lookups
+      # and pkdiff install fail if they use this registry (`npm ci` would
+      # download the lockfile's registry.npmjs.org URLs from it).
+      - name: Set npm_config_registry in $GITHUB_ENV
+        run: |
+          {
+            echo "npm_config_registry=https://example.invalid/"
+            echo "npm_config_@consensys-incorporated:registry=https://example.invalid/"
+          } >>"$GITHUB_ENV"
+      # Control: npm uses them unless told otherwise.
+      - name: Check that npm_config_registry applies
+        working-directory: /tmp
+        run: |
+          [[ "$(npm config get registry)" == "https://example.invalid/" ]]
+          [[ "$(npm config get @consensys-incorporated:registry)" == "https://example.invalid/" ]]
+      # As an earlier step in a caller's job could. Later steps of this job
+      # clear it. (The runner refuses NODE_OPTIONS from $GITHUB_ENV.)
+      - name: Set BASH_ENV in $GITHUB_ENV
+        run: |
+          echo "touch '$CANARY_DIR/bash_env'" >"$CANARY_DIR/bash-env.sh"
+          echo "BASH_ENV=$CANARY_DIR/bash-env.sh" >>"$GITHUB_ENV"
+      # Control: it runs code in a step that doesn't clear it.
+      - name: Check that BASH_ENV applies
+        run: |
+          test -e "$CANARY_DIR/bash_env"
+          rm "$CANARY_DIR/bash_env"
+      - name: Dry run
+        uses: ./actions-repo/npm-publish
+        # The dry run passes with or without these overrides: packing does not
+        # use the registry, and npm lookups use npm, not Yarn. The last step
+        # checks that they are ignored.
+        env:
+          YARN_NODE_LINKER: pnp
+          YARN_NPM_REGISTRY_SERVER: https://npm.example.com
+          YARN_NPM_PUBLISH_REGISTRY: https://npm.example.com
+        with:
+          dry-run: true
+      - name: Assert no canary ran
+        env:
+          BASH_ENV: ''
+        run: |
+          failed=0
+          for marker in plugin yarnpath prepublish prepublishOnly prepack postpack bin bash_env; do
+            if [[ -e "$CANARY_DIR/$marker" ]]; then
+              echo "::error::Canary '$marker' ran during publish."
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Assert the package was packed without lifecycle scripts
+        env:
+          BASH_ENV: ''
+        run: |
+          tarball="$RUNNER_TEMP/$PACK_DIR_NAME/@consensys-incorporated-test-npm-publish-fixture-canary-999.0.0.tgz"
+          test -f "$tarball"
+          tar -O -zxf "$tarball" package/package.json |
+            jq --exit-status '.scripts | (has("prepublish") or has("prepublishOnly") or has("prepack") or has("postpack")) | not'
+      # Reads the effective configuration the way the Publish step does: the
+      # generated file as YARN_RC_FILENAME, the job's YARN_* variables, and
+      # environment.sh. Last, so that no Yarn command runs before the canary
+      # checks.
+      - name: Assert YARN_* overrides are ignored
+        env:
+          BASH_ENV: ''
+          YARN_IGNORE_PATH: '1'
+          YARN_NPM_REGISTRY_SERVER: https://example.invalid
+          YARN_NPM_PUBLISH_REGISTRY: https://example.invalid
+          YARN_NODE_LINKER: pnp
+          YARN_ENABLE_SCRIPTS: 'true'
+        run: |
+          shopt -s nullglob
+          rc_files=("$(dirname "$GITHUB_WORKSPACE")"/.yarnrc-*.yml)
+          if [[ ${#rc_files[@]} -ne 1 ]]; then
+            echo "::error::Expected one generated Yarn configuration file, found ${#rc_files[@]}."
+            exit 1
+          fi
+          export YARN_RC_FILENAME="${rc_files[0]##*/}"
+
+          # Control: without environment.sh the override applies, so the
+          # assertion below can fail.
+          if [[ "$(yarn config get npmRegistryServer --json | jq -r .)" != "$YARN_NPM_REGISTRY_SERVER" ]]; then
+            echo "::error::YARN_NPM_REGISTRY_SERVER has no effect, so this test proves nothing."
+            exit 1
+          fi
+
+          source actions-repo/npm-publish/scripts/environment.sh
+          failed=0
+          for entry in \
+            npmRegistryServer=https://registry.npmjs.org \
+            npmPublishRegistry=https://registry.npmjs.org \
+            nodeLinker=node-modules \
+            enableScripts=false; do
+            key="${entry%%=*}"
+            # --json: plain output colours booleans on the runner.
+            value="$(yarn config get "$key" --json | jq -r .)"
+            if [[ "$value" != "${entry#*=}" ]]; then
+              echo "::error::$key is '$value', expected '${entry#*=}'."
+              failed=1
+            fi
+          done
+          exit "$failed"

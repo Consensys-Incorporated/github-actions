@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'npm-publish'
+description: >-
+  Publish every public workspace package whose current version is not on npm
+  yet: with OIDC (staged, with provenance) for packages already on npm, and
+  with a token for a package's first publish. Without a usable credential,
+  pack the packages instead (a dry run). The repository cannot run code while
+  publishing.
+
+inputs:
+  npm-token:
+    description: 'npm token, used only for the first publish of a package. Later publishes use OIDC.'
+    required: false
+    default: ''
+  dry-run:
+    description: >-
+      `true` to pack instead of publishing. `false` to fail when a credential
+      is missing instead of packing. Unset: pack when a credential is missing.
+      Any other value fails.
+    required: false
+    default: ''
+  npm-tag:
+    description: 'The npm dist-tag to publish to.'
+    required: false
+    default: latest
+
+outputs:
+  dry-run:
+    description: '`true` if any package was packed instead of published.'
+    value: ${{ steps.publish.outputs.dry-run }}
+
+runs:
+  using: composite
+  steps:
+    # Before anything else runs: any value other than `true` would publish.
+    - name: Validate inputs
+      shell: bash
+      env:
+        BASH_ENV: ''
+        ENV: ''
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" && -n "$DRY_RUN" ]]; then
+          echo "::error::'dry-run' must be 'true', 'false' or empty."
+          exit 1
+        fi
+
+    - name: Sanitize Yarn configuration
+      id: sanitize
+      shell: bash
+      env:
+        # An earlier step in the job may set these through $GITHUB_ENV to run
+        # code in this step. They must be cleared in the step's environment:
+        # bash reads BASH_ENV before the script starts. (The runner refuses
+        # NODE_OPTIONS from $GITHUB_ENV, so it can come only from the
+        # caller's own workflow.)
+        BASH_ENV: ''
+        ENV: ''
+        YARN_IGNORE_PATH: '1'
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/sanitize.sh"'
+
+    # In its own step, so that GH_TOKEN is not in the Publish step's
+    # environment.
+    - name: Find the release pull request
+      shell: bash
+      env:
+        BASH_ENV: ''
+        ENV: ''
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        pr_url="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+          --jq '.[0].html_url // empty' 2>/dev/null || true)"
+        if [[ "$pr_url" =~ ^https://[A-Za-z0-9./_-]+$ ]]; then
+          echo "Releasing via pull request: $pr_url"
+        fi
+
+    - name: Publish
+      id: publish
+      shell: bash
+      env:
+        BASH_ENV: ''
+        ENV: ''
+        YARN_IGNORE_PATH: '1'
+        YARN_RC_FILENAME: ${{ steps.sanitize.outputs.yarn-rc-filename }}
+        YARN_NPM_AUTH_TOKEN: ${{ inputs.npm-token }}
+        PUBLISH_NPM_TAG: ${{ inputs.npm-tag }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        PACK_DIR: ${{ runner.temp }}/npm-publish-packages
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/main.sh"'
+
+    # `npm ci` from pkdiff/package-lock.json, without install scripts, in a
+    # new directory under $RUNNER_TEMP: outside the repository, so that no
+    # .npmrc in it applies, and outside the action's own directory, which may
+    # be shared between jobs or be inside the caller's checkout. --registry
+    # overrides npm_config_registry from the caller's job.
+    - name: Install pkdiff
+      if: ${{ steps.publish.outputs.dry-run == 'true' }}
+      shell: bash
+      env:
+        BASH_ENV: ''
+        ENV: ''
+        PKDIFF_DIR: ${{ runner.temp }}/npm-publish-pkdiff
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/install-pkdiff.sh"'
+
+    - name: Generate package diff report
+      if: ${{ steps.publish.outputs.dry-run == 'true' }}
+      shell: bash
+      working-directory: /tmp
+      env:
+        BASH_ENV: ''
+        ENV: ''
+        PACK_DIR: ${{ runner.temp }}/npm-publish-packages
+        PKDIFF_DIR: ${{ runner.temp }}/npm-publish-pkdiff
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/report.sh"'
+
+    - name: Upload packages and report
+      if: ${{ steps.publish.outputs.dry-run == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: npm-publish-dry-run-${{ github.sha }}
+        # Names are unique per workflow run; a second dry run in the same run
+        # replaces the first one's artifact instead of failing.
+        overwrite: true
+        path: |
+          ${{ runner.temp }}/npm-publish-packages/*.tgz
+          ${{ runner.temp }}/npm-publish-packages/*.html
+

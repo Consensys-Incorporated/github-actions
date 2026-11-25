@@ -1,0 +1,10 @@
+{
+  "name": "npm-publish-pkdiff",
+  "private": true,
+  "dependencies": {
+    "pkdiff": "2.0.1"
+  },
+  "overrides": {
+    "minimist@0.2.1": "0.2.4"
+  }
+}
