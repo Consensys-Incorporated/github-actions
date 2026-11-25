@@ -44,7 +44,7 @@ pass() {
 #       exists; records the notes of `gh release create` in $SHIM_LOG.notes;
 #       answers release lookups from $EXISTING_RELEASES ("<tag> <target>" per
 #       line; "!error" makes every lookup fail with HTTP 500), if the file
-#       exists.
+#       exists, printing the target, or "Notes of <tag>" for `--jq .body`.
 #   git: logs and swallows `git push`; passes everything else to the real git.
 install_shims() {
   local dir="$1" real_git
@@ -92,7 +92,11 @@ if [[ "$1" == "api" && "$2" == repos/*/releases/tags/* ]]; then
     exit 1
   fi
   if [[ -f "${EXISTING_RELEASES:-}" ]] && target="$(awk -v tag="$tag" '$1 == tag { print $2; found = 1 } END { exit !found }' "$EXISTING_RELEASES")"; then
-    echo "$target"
+    if [[ " $* " == *" .body "* ]]; then
+      echo "Notes of $tag"
+    else
+      echo "$target"
+    fi
     exit 0
   fi
   echo "gh: Not Found (HTTP 404)" >&2
@@ -207,6 +211,7 @@ run_prepare() {
   : >"$dir.out/shim.log"
   set +e
   PREPARE_LOG="$(cd "$dir" && PATH="$WORK/shims:$PATH" SHIM_LOG="$dir.out/shim.log" EXISTING_TAGS="$tags" \
+    EXISTING_RELEASES="$dir.existing-releases" \
     GITHUB_OUTPUT="$dir.out/github_output" GITHUB_ENV="$dir.out/github_env" RELEASE_DIR="$dir.out/release" \
     "$SCRIPTS/prepare-release.sh" 2>&1)"
   PREPARE_STATUS=$?
@@ -468,6 +473,40 @@ test_nothing_to_release() {
   printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" >"$dir.existing-tags"
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "no released packages fails" "No packages to release"
+}
+
+# A re-run after the release finished: every package is tagged, and the
+# release v3.0.0 and its tag are at the release commit, so there is nothing to
+# do. The release's notes are exported, and the Create step is skipped.
+test_rerun_complete() {
+  local dir="$WORK/rerun-complete" sha
+  (monorepo_fixture "$dir")
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" "v3.0.0 $sha" >"$dir.existing-tags"
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  if ((PREPARE_STATUS == 0)) && grep -qx 'complete=true' "$dir.out/github_output" &&
+    [[ "$(env_value "$dir.out/github_env" RELEASE_NOTES)" == "Notes of v3.0.0" ]]; then
+    pass "re-run after a finished release succeeds without creating anything"
+  else
+    fail "re-run after a finished release" "status $PREPARE_STATUS" "$PREPARE_LOG" "$(cat "$dir.out/github_output")"
+  fi
+
+  # Not finished: the release tag is elsewhere, the release does not exist,
+  # or HEAD is not the release commit.
+  printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" "v3.0.0 0123456789abcdef0123456789abcdef01234567" >"$dir.existing-tags"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "re-run: release tag at another commit still fails" "No packages to release"
+
+  printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" "v3.0.0 $sha" >"$dir.existing-tags"
+  rm "$dir.existing-releases"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "re-run: release tag without a release still fails" "No packages to release"
+
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  git -C "$dir" commit -q --allow-empty -m "After the release"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "re-run: HEAD other than the release commit still fails" "No packages to release"
 }
 
 test_lookup_error() {
@@ -923,6 +962,7 @@ test_list_workspaces
 test_monorepo
 test_missing_section
 test_nothing_to_release
+test_rerun_complete
 test_lookup_error
 test_config_errors
 test_workflow_commands

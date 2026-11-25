@@ -7,10 +7,12 @@
 # Node.js.
 #
 # Environment:
-#   GH_TOKEN, GITHUB_REPOSITORY: for the tag lookups
+#   GH_TOKEN, GITHUB_REPOSITORY: for the tag and release lookups
+#   RELEASE_COMMIT_ID: the release commit, to recognize a finished release
 #   RELEASE_DIR: directory for notes.md and packages.tsv
 #
-# Outputs (to $GITHUB_OUTPUT): release-version, mode (monorepo|polyrepo)
+# Outputs (to $GITHUB_OUTPUT): release-version, mode (monorepo|polyrepo),
+#   complete (true if a monorepo release is already finished)
 # Exports (to $GITHUB_ENV): RELEASE_NOTES
 # Files: $RELEASE_DIR/notes.md; $RELEASE_DIR/packages.tsv (monorepo:
 #   "<name>\t<path>\t<version>" per released package, in workspace order)
@@ -173,11 +175,6 @@ else
     fi
   done <<<"$workspaces"
 
-  if [[ ! -s "$packages_file" ]]; then
-    echo "::error::No packages to release: every public package's current version is already tagged."
-    exit 1
-  fi
-
   : >"$notes_file"
   first=true
   while IFS=$'\t' read -r name location version; do
@@ -201,6 +198,33 @@ else
     first=false
     printf '## %s %s\n\n%s\n' "$name" "$version" "$section" >>"$notes_file"
   done <"$packages_file"
+
+  # Every package is tagged already on a re-run after the release finished.
+  # If HEAD is the release commit and the release v<version> and its tag are
+  # there, nothing is left to do: the Create release step is skipped, and the
+  # release's own notes are exported.
+  if [[ ! -s "$packages_file" ]]; then
+    release_tag="v$release_version"
+    error_file="$RELEASE_DIR/gh-error"
+    complete=false
+    if [[ -n "${RELEASE_COMMIT_ID:-}" && "$(git rev-parse HEAD)" == "$RELEASE_COMMIT_ID" ]]; then
+      tag_commit="$(remote_tag_commit "$release_tag" "$error_file")"
+      if [[ "$tag_commit" == "$RELEASE_COMMIT_ID" ]]; then
+        if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" --jq .body >"$notes_file" 2>"$error_file"; then
+          complete=true
+        elif ! grep -qF "HTTP 404" "$error_file"; then
+          echo "::error::Could not look up release $release_tag: $(escape_data "$(cat "$error_file")")"
+          exit 1
+        fi
+      fi
+    fi
+    if [[ "$complete" == false ]]; then
+      echo "::error::No packages to release: every public package's current version is already tagged."
+      exit 1
+    fi
+    echo "Release $release_tag and every package's tag already exist at $RELEASE_COMMIT_ID: nothing to create."
+    echo "complete=true" >>"$GITHUB_OUTPUT"
+  fi
 fi
 
 if [[ -z "$(tr -d '[:space:]' <"$notes_file")" ]]; then

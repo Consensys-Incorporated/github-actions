@@ -75,7 +75,9 @@ the working tree differs from `HEAD`. Otherwise it fails before creating anythin
      Nested workspaces are followed.
    - A workspace is released if it is not private, its version is not `0.0.0`, and the tag
      `<name>@<version>` does not exist (the lookup returns HTTP 404; any other error fails).
-     At least one package must be released.
+     At least one package must be released, unless the release is already finished: `HEAD` is
+     `release-commit`, and the release `v<version>` and its tag are at that commit. Then nothing
+     is created, and the release's notes are exported as `RELEASE_NOTES`.
    - The notes are a `## <name> <version>` section per released package, in workspace order,
      each followed by the body of its changelog's `## [<version>]` section, which must exist.
 4. Fail if `release-commit` is not a full commit SHA, if `HEAD` is not `release-commit`, if a
@@ -92,7 +94,8 @@ the working tree differs from `HEAD`. Otherwise it fails before creating anythin
    them at another commit.
 
 Because of steps 5 and 6, re-running the action after the release was created but the tag push
-failed creates and pushes the tags without creating the release again.
+failed creates and pushes the tags without creating the release again. Re-running it after the
+release finished, for example to re-run a later failed step, succeeds without creating anything.
 
 A changelog section's body is the lines after its `## [<version>]` heading, up to the next `## `
 heading or the first link reference definition, with blank lines trimmed at both ends.
@@ -117,7 +120,8 @@ heading or the first link reference definition, with blank lines trimmed at both
   `release-commit` input, which defaults to `github.sha`.
 - An existing release `v<version>` at the release commit is kept instead of failing `gh release
   create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
-  can finish a release whose tag push failed.
+  can finish a release whose tag push failed. A monorepo re-run after the release finished
+  succeeds without creating anything; upstream failed with nothing to release.
 - The action fails if the tag `v<version>` already exists at another commit. Upstream created
   the release anyway, and GitHub attached it to that commit.
 - The action fails if a file it reads is not committed at `HEAD` or has uncommitted changes, or

@@ -88,6 +88,28 @@ jobs:
           # The fixture changelog has a line that looks like a heredoc delimiter.
           grep -q '^- EOF_0123456789abcdef: ' <<<"$RELEASE_NOTES"
           grep -q '^## @octo/b 2.0.0$' <<<"$RELEASE_NOTES"
+      # A re-run after the release finished: the shims now answer that the
+      # tags and the release exist at the release commit.
+      - name: Record the release as finished
+        env:
+          RELEASE_COMMIT: ${{ steps.fixture.outputs.commit }}
+        run: |
+          printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "v3.0.0 $RELEASE_COMMIT" >>"$EXISTING_TAGS"
+          echo "v3.0.0 $RELEASE_COMMIT" >"$RUNNER_TEMP/existing-releases"
+          echo "EXISTING_RELEASES=$RUNNER_TEMP/existing-releases" >>"$GITHUB_ENV"
+          : >"$SHIM_LOG"
+      - name: Run action again
+        uses: ./npm-publish-release
+        with:
+          release-commit: ${{ steps.fixture.outputs.commit }}
+      - name: Assert the re-run created nothing
+        run: |
+          cat "$SHIM_LOG"
+          if grep -q '^gh release create\|^git push' "$SHIM_LOG"; then
+            echo "::error::The re-run created a release or pushed tags."
+            exit 1
+          fi
+          [[ "$RELEASE_NOTES" == "Notes of v3.0.0" ]]
 
   # Runs the release preparation against Consensys-Incorporated/ocap-kernel at
   # its Release 7.0.0 commit, with tag lookups answered as before that release,
