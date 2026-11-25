@@ -74,6 +74,16 @@ done
 
 release_tag="v$RELEASE_VERSION"
 error_file="$RELEASE_DIR/gh-error"
+
+# GitHub ignores --target when the tag v<version> already exists, and a
+# release's target_commitish does not say where its tag is. So the tag itself
+# must be absent or at the release commit, whether or not the release exists.
+tag_commit="$(remote_tag_commit "$release_tag" "$error_file")"
+if [[ -n "$tag_commit" && "$tag_commit" != "$RELEASE_COMMIT_ID" ]]; then
+  echo "::error::Tag $release_tag already exists at $tag_commit, not at the release commit $RELEASE_COMMIT_ID. A release $release_tag would be attached to that commit; delete the tag or release another version."
+  exit 1
+fi
+
 if target="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" --jq .target_commitish 2>"$error_file")"; then
   if [[ "$target" != "$RELEASE_COMMIT_ID" ]]; then
     echo "::error::Release $release_tag already exists with target '$(escape_data "$target")', not the release commit $RELEASE_COMMIT_ID."

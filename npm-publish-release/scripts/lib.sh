@@ -40,6 +40,49 @@ escape_log() {
   printf '%s' "$value"
 }
 
+# remote_tag_commit <tag> <error file>
+#
+# Prints the commit that <tag> points at in $GITHUB_REPOSITORY, following
+# annotated tags, or nothing if the tag does not exist (HTTP 404). Fails on
+# any other lookup error, with gh's error in <error file>.
+remote_tag_commit() {
+  local tag="$1" error_file="$2" object fields type sha depth
+  if ! object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>"$error_file")"; then
+    if grep -qF "HTTP 404" "$error_file"; then
+      return 0
+    fi
+    echo "::error::Could not look up tag $tag: $(escape_data "$(cat "$error_file")")" >&2
+    return 1
+  fi
+  for depth in 1 2 3 4 5; do
+    fields="$(jq -r '"\(.object.type) \(.object.sha)"' <<<"$object")" || return 1
+    type="${fields%% *}"
+    sha="${fields#* }"
+    if [[ ! "$sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+      echo "::error::Tag $tag points at '$(escape_data "$sha")', which is not an object SHA." >&2
+      return 1
+    fi
+    case "$type" in
+      commit)
+        printf '%s\n' "$sha"
+        return 0
+        ;;
+      tag)
+        if ! object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" 2>"$error_file")"; then
+          echo "::error::Could not look up annotated tag object $sha of $tag: $(escape_data "$(cat "$error_file")")" >&2
+          return 1
+        fi
+        ;;
+      *)
+        echo "::error::Tag $tag points at a $(escape_data "$type"), not a commit." >&2
+        return 1
+        ;;
+    esac
+  done
+  echo "::error::Tag $tag has more than $depth levels of annotated tags." >&2
+  return 1
+}
+
 # require_committed <path>...
 #
 # Fails unless each <path>, relative to the repository root (the current

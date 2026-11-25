@@ -78,8 +78,11 @@ the working tree differs from `HEAD`. Otherwise it fails before creating anythin
      At least one package must be released.
    - The notes are a `## <name> <version>` section per released package, in workspace order,
      each followed by the body of its changelog's `## [<version>]` section, which must exist.
-4. Fail if `release-commit` is not a full commit SHA, if `HEAD` is not `release-commit`, or if a
-   `<name>@<version>` tag for a released package already exists locally at another commit.
+4. Fail if `release-commit` is not a full commit SHA, if `HEAD` is not `release-commit`, if a
+   `<name>@<version>` tag for a released package already exists locally at another commit, or
+   if the tag `v<version>` already exists in the repository (following annotated tags) at
+   another commit. GitHub ignores `--target` when that tag exists, so the release would be
+   attached to the tag's commit; this happens when a release is deleted but its tag is not.
 5. Create the release with `gh release create v<version> --title <version> --notes-file …
    --target <release-commit>`. If release `v<version>` already exists with target
    `release-commit`, skip this step and say so in the log; if it exists with another target,
@@ -114,6 +117,8 @@ heading or the first link reference definition, with blank lines trimmed at both
 - An existing release `v<version>` at the release commit is kept instead of failing `gh release
   create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
   can finish a release whose tag push failed.
+- The action fails if the tag `v<version>` already exists at another commit. Upstream created
+  the release anyway, and GitHub attached it to that commit.
 - The action fails if a file it reads is not committed at `HEAD` or has uncommitted changes, or
   if any file is marked skip-worktree or assume-unchanged (a sparse checkout). Upstream read the
   working tree as it was.

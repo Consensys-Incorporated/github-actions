@@ -38,11 +38,13 @@ pass() {
 }
 
 # install_shims <dir>: writes gh and git shims into <dir>.
-#   gh: logs to $SHIM_LOG; answers tag lookups from $EXISTING_TAGS (one tag
-#       per line; "!error" makes every lookup fail with HTTP 500); records the
-#       notes of `gh release create` in $SHIM_LOG.notes; answers release
-#       lookups from $EXISTING_RELEASES ("<tag> <target>" per line; "!error"
-#       makes every lookup fail with HTTP 500), if the file exists.
+#   gh: logs to $SHIM_LOG; answers tag lookups from $EXISTING_TAGS ("<tag>
+#       [<commit> [<annotated tag object>]]" per line, the commit defaulting
+#       to zeros; "!error" makes every lookup fail with HTTP 500), if the file
+#       exists; records the notes of `gh release create` in $SHIM_LOG.notes;
+#       answers release lookups from $EXISTING_RELEASES ("<tag> <target>" per
+#       line; "!error" makes every lookup fail with HTTP 500), if the file
+#       exists.
 #   git: logs and swallows `git push`; passes everything else to the real git.
 install_shims() {
   local dir="$1" real_git
@@ -56,11 +58,28 @@ printf ' %q' "$@" >>"$SHIM_LOG"
 printf '\n' >>"$SHIM_LOG"
 if [[ "$1" == "api" && "$2" == repos/*/git/ref/tags/* ]]; then
   tag="${2#repos/*/git/ref/tags/}"
-  if grep -qxF '!error' "$EXISTING_TAGS"; then
+  if [[ -f "${EXISTING_TAGS:-}" ]] && grep -qxF '!error' "$EXISTING_TAGS"; then
     echo "gh: Server Error (HTTP 500)" >&2
     exit 1
   fi
-  if grep -qxF -- "$tag" "$EXISTING_TAGS"; then
+  if [[ -f "${EXISTING_TAGS:-}" ]] && line="$(awk -v tag="$tag" '$1 == tag { print; found = 1; exit } END { exit !found }' "$EXISTING_TAGS")"; then
+    read -r _ commit object <<<"$line"
+    if [[ " $* " != *" --silent "* ]]; then
+      if [[ -n "$object" ]]; then
+        printf '{"ref":"refs/tags/%s","object":{"type":"tag","sha":"%s"}}\n' "$tag" "$object"
+      else
+        printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%s"}}\n' "$tag" "${commit:-0000000000000000000000000000000000000000}"
+      fi
+    fi
+    exit 0
+  fi
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+fi
+if [[ "$1" == "api" && "$2" == repos/*/git/tags/* ]]; then
+  object="${2#repos/*/git/tags/}"
+  if [[ -f "${EXISTING_TAGS:-}" ]] && commit="$(awk -v object="$object" '$3 == object { print $2; found = 1; exit } END { exit !found }' "$EXISTING_TAGS")"; then
+    printf '{"sha":"%s","object":{"type":"commit","sha":"%s"}}\n' "$object" "$commit"
     exit 0
   fi
   echo "gh: Not Found (HTTP 404)" >&2
@@ -204,7 +223,7 @@ run_create() {
   fi
   set +e
   CREATE_LOG="$(cd "$dir" && PATH="$WORK/shims:$PATH" SHIM_LOG="$dir.out/shim.log" GH_TOKEN=token \
-    EXISTING_RELEASES="$dir.existing-releases" \
+    EXISTING_TAGS="$dir.existing-tags" EXISTING_RELEASES="$dir.existing-releases" \
     RELEASE_COMMIT_ID="$commit" RELEASE_VERSION="$version" RELEASE_MODE="$mode" \
     RELEASE_DIR="$dir.out/release" "$SCRIPTS/create-release.sh" 2>&1)"
   CREATE_STATUS=$?
@@ -748,6 +767,78 @@ test_rerun_conflicts() {
   fi
 }
 
+# expect_release_tag_conflict <name> <dir>: runs create-release.sh in <dir>
+# and expects it to fail on the tag v3.0.0 at another commit before creating
+# or pushing anything.
+expect_release_tag_conflict() {
+  local test_name="$1" dir="$2"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0
+  if ((CREATE_STATUS != 0)) && grep -qF "Tag v3.0.0 already exists at 0123456789abcdef0123456789abcdef01234567, not at the release commit" <<<"$CREATE_LOG" &&
+    ! grep -q '^gh release create\|^git push' "$dir.out/shim.log" && [[ -z "$(git -C "$dir" tag)" ]]; then
+    pass "$test_name"
+  else
+    fail "$test_name" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+}
+
+# A tag v<version> at another commit, as deleting a release in the UI leaves
+# behind: GitHub ignores --target when the tag exists, so the release would be
+# attached to that commit while the package tags go on HEAD.
+test_release_tag() {
+  local dir sha
+
+  dir="$WORK/release-tag-elsewhere"
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 0123456789abcdef0123456789abcdef01234567" >>"$dir.existing-tags"
+  expect_release_tag_conflict "release tag at another commit fails" "$dir"
+
+  dir="$WORK/release-tag-annotated-elsewhere"
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 0123456789abcdef0123456789abcdef01234567 fedcba9876543210fedcba9876543210fedcba98" >>"$dir.existing-tags"
+  expect_release_tag_conflict "annotated release tag at another commit fails" "$dir"
+
+  # The release's target_commitish names the release commit, but the tag
+  # says where the release is.
+  dir="$WORK/release-tag-existing-release"
+  (monorepo_fixture "$dir")
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 0123456789abcdef0123456789abcdef01234567" >>"$dir.existing-tags"
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  expect_release_tag_conflict "existing release with its tag at another commit fails" "$dir"
+
+  dir="$WORK/release-tag-here"
+  (monorepo_fixture "$dir")
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 $sha fedcba9876543210fedcba9876543210fedcba98" >>"$dir.existing-tags"
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0
+  if ((CREATE_STATUS == 0)) && grep -q '^gh api repos/octo/repo/git/tags/fedcba9876543210fedcba9876543210fedcba98' "$dir.out/shim.log" &&
+    grep -qxF "git push https://x-access-token:token@github.com/octo/repo.git refs/tags/@octo/a@1.1.0 refs/tags/@octo/b@2.0.0" "$dir.out/shim.log"; then
+    pass "annotated release tag at the release commit is accepted"
+  else
+    fail "annotated release tag at the release commit is accepted" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+
+  dir="$WORK/release-tag-lookup-error"
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  echo '!error' >"$dir.existing-tags"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0
+  if ((CREATE_STATUS != 0)) && grep -qF "Could not look up tag v3.0.0" <<<"$CREATE_LOG" &&
+    ! grep -q '^gh release create\|^git push' "$dir.out/shim.log"; then
+    pass "release tag lookup error other than 404 fails"
+  else
+    fail "release tag lookup error" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+}
+
 test_release_lookup_error() {
   local dir="$WORK/release-lookup-error"
   (monorepo_fixture "$dir")
@@ -810,6 +901,7 @@ test_uncommitted
 test_head_mismatch
 test_rerun
 test_rerun_conflicts
+test_release_tag
 test_release_lookup_error
 test_polyrepo
 
