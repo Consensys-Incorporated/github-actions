@@ -31,6 +31,16 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      # Fails if dist/ is out of date with the source or the dependencies, for
+      # example after a dependency bump without a rebuild.
+      - name: Check that the bundle is up to date
+        run: |
+          npm run build
+          if ! git diff --exit-code -- dist || [[ -n "$(git status --porcelain -- dist)" ]]; then
+            git status --short -- dist
+            echo "::error::check-changelog/dist is out of date. Run npm run build in check-changelog and commit the result."
+            exit 1
+          fi
       - name: Fixture repository tests
         run: test/fixtures.sh
 
@@ -104,7 +114,7 @@ jobs:
   # End to end against a merged ocap-kernel pull request whose pre-merge head
   # changed a public package and added a changelog entry linking it. The action
   # only checks out the repository it runs in, so this checks out ocap-kernel
-  # the same way and runs the script directly.
+  # the same way and runs the bundled script directly.
   ocap-kernel:
     name: ocap-kernel PR (pr-number ${{ matrix.pr-number }})
     runs-on: ubuntu-latest
@@ -132,15 +142,12 @@ jobs:
         with:
           node-version: 24.x
           package-manager-cache: false
-      - name: Install check dependencies
-        working-directory: actions-repo/check-changelog
-        run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
       - name: Run script
         id: script
         continue-on-error: true
         env:
           PR_NUMBER: ${{ matrix.pr-number }}
-        run: node actions-repo/check-changelog/scripts/check-changelog.ts target-repo main "$PR_NUMBER"
+        run: node actions-repo/check-changelog/dist/check-changelog.js target-repo main "$PR_NUMBER"
       - name: Assert outcome
         env:
           OUTCOME: ${{ steps.script.outcome }}

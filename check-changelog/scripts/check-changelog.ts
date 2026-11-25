@@ -4,7 +4,7 @@
 // CHANGELOG.md has no entry linking the pull request. Ported from
 // MetaMask/github-tools src/changelog-check.mts.
 //
-// Usage: node check-changelog.ts <repo-path> <base-branch> <pr-number>
+// Usage: node check-changelog.js <repo-path> <base-branch> <pr-number>
 
 import { parseChangelog } from '@metamask/auto-changelog';
 import { execFileSync } from 'node:child_process';
@@ -462,7 +462,7 @@ async function getChangedPackages(
 async function main(argv: string[]): Promise<void> {
   const [repoPath, baseRef, prNumber] = argv;
   if (!repoPath || !baseRef || !prNumber) {
-    throw new Error('Usage: node check-changelog.ts <repo-path> <base-branch> <pr-number>');
+    throw new Error('Usage: node check-changelog.js <repo-path> <base-branch> <pr-number>');
   }
 
   const fullRepoPath = path.resolve(process.cwd(), repoPath);
