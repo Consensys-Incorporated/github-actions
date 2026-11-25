@@ -17,6 +17,11 @@
 # 3. Lifecycle scripts are removed from every workspace, private ones included.
 # 4. Packages that redirect publishing to a registry other than
 #    `https://registry.npmjs.org` are rejected.
+# 5. Workspaces other than the root that name a package manager are rejected:
+#    Corepack runs the Yarn that the nearest `package.json` names, so such a
+#    workspace could get Yarn 1, which runs `yarn npm publish` as the
+#    workspace's own `npm` script. (publish.sh runs the root's Yarn version
+#    anyway.)
 
 set -euo pipefail
 
@@ -73,6 +78,12 @@ while IFS= read -r location; do
   registry="$(jq --compact-output 'if .private == true then empty else .publishConfig.registry // empty end' "$manifest")"
   if [[ -n "$registry" && "$registry" != '"https://registry.npmjs.org"' && "$registry" != '"https://registry.npmjs.org/"' ]]; then
     echo "::error::\"$manifest\" sets \"publishConfig.registry\" to $registry. Only \"https://registry.npmjs.org\" is supported."
+    exit 1
+  fi
+
+  if [[ "$location" != "." ]] &&
+    [[ "$(jq 'has("packageManager") or (.devEngines | type == "object" and has("packageManager"))' "$manifest")" == "true" ]]; then
+    echo "::error::\"$manifest\" sets \"packageManager\" or \"devEngines.packageManager\". Only the root package.json may name a package manager."
     exit 1
   fi
 

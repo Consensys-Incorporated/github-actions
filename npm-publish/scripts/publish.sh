@@ -15,7 +15,7 @@
 #        provenance if the repository is public;
 #      - without OIDC: pack, or fail if DRY_RUN=false.
 #
-# Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN,
+# Environment: PUBLISH_NPM_TAG, DRY_RUN, YARN_NPM_AUTH_TOKEN, ROOT_YARN_VERSION,
 # ACTIONS_ID_TOKEN_REQUEST_URL, REPOSITORY_VISIBILITY, PACK_DIR (where to
 # write tarballs), GITHUB_STEP_SUMMARY.
 
@@ -36,7 +36,13 @@ if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" && -n "$DRY_RUN" ]]; then
   exit 1
 fi
 : "${PACK_DIR:?PACK_DIR must be set}"
+: "${ROOT_YARN_VERSION:?ROOT_YARN_VERSION must be set}"
 YARN_NPM_AUTH_TOKEN="${YARN_NPM_AUTH_TOKEN:-}"
+
+# The root's Yarn, which main.sh checked, by version through Corepack. Plain
+# `yarn` would run the Yarn that this workspace's package.json names, and
+# Yarn 1 runs `yarn npm publish` as the workspace's `npm` script.
+yarn=(corepack "yarn@$ROOT_YARN_VERSION")
 
 # Runs a command with workflow commands in its output turned off. Yarn prints
 # the names of the packed files, which the repository controls, so a file name
@@ -77,7 +83,7 @@ elif [[ -z "$published_version" ]]; then
     DRY_RUN="true"
   else
     echo "$package_name is not on npm yet. Using the npm token for its initial publish."
-    publish_cmd=(yarn npm publish --tag "$PUBLISH_NPM_TAG")
+    publish_cmd=("${yarn[@]}" npm publish --tag "$PUBLISH_NPM_TAG")
     DRY_RUN="false"
   fi
 else
@@ -91,7 +97,7 @@ else
     DRY_RUN="true"
   else
     echo "$package_name is on npm. Publishing with OIDC."
-    publish_cmd=(yarn npm publish --tag "$PUBLISH_NPM_TAG" --staged)
+    publish_cmd=("${yarn[@]}" npm publish --tag "$PUBLISH_NPM_TAG" --staged)
     if [[ "${REPOSITORY_VISIBILITY:-}" == "public" ]]; then
       publish_cmd+=(--provenance)
     fi
@@ -104,7 +110,7 @@ if [[ "$DRY_RUN" != "true" ]]; then
   exit 0
 fi
 
-run_quoted yarn pack --out "$PACK_DIR/%s-%v.tgz"
+run_quoted "${yarn[@]}" pack --out "$PACK_DIR/%s-%v.tgz"
 
 # Yarn's %s is the package name with "/" replaced by "-"; a scope's "@" stays.
 tarball="$PACK_DIR/${package_name//\//-}-$package_version.tgz"

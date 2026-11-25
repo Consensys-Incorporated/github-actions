@@ -82,14 +82,16 @@ fails the action before anything else runs.
    point the action's own Yarn steps at a minimal generated configuration outside the checkout
    (`enableScripts: false`, the npm registry only, no plugins), ignore `yarnPath`, delete
    `~/.yarnrc.yml`, reject packages whose `publishConfig.registry` is not
-   `https://registry.npmjs.org`, and delete `prepublish`, `prepublishOnly`, `prepack` and `postpack`
+   `https://registry.npmjs.org`, reject workspaces other than the root that set `packageManager` or
+   `devEngines.packageManager`, and delete `prepublish`, `prepublishOnly`, `prepack` and `postpack`
    scripts from every workspace, private ones included.
 2. **Find the release pull request**: log the pull request that merged the commit, in a step of
    its own, so that the Publish step doesn't hold the job's `GITHUB_TOKEN`.
 3. **Publish** (`scripts/main.sh`, `publish.sh`): require Yarn ≥ 4.16. Find the public workspaces
    whose `name@version` is not on npm (skipping `0.0.0`; in a single-package repository, the root
    unless it's private), then for each one, in the order `yarn workspaces list` prints them, run
-   `scripts/publish.sh` in its directory, stopping at the first failure:
+   `scripts/publish.sh` in its directory, stopping at the first failure. `publish.sh` runs the
+   root's Yarn version, as `corepack yarn@<version>`:
    - `dry-run: true` → pack;
    - not on npm: with a token, `yarn npm publish --tag <tag>`; without, pack (or fail if
      `dry-run: false`);
@@ -155,6 +157,12 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
   puts the bins of the workspace and its dependencies first on `PATH`: a package declaring a
   `bash`, `jq`, `npm` or `yarn` bin would run in place of the real tool, with the token in its
   environment.
+- Yarn packs and publishes as the root's version, `corepack yarn@<version>`, in every workspace, and
+  a workspace other than the root that sets `packageManager` or `devEngines.packageManager` fails
+  the action. Corepack runs the Yarn that the nearest `package.json` names, so a workspace naming
+  Yarn 1 would get it: Yarn 1 has no `npm` command and runs `yarn npm publish` as the workspace's
+  own `npm` script, with the token or OIDC in its environment. Upstream checks the Yarn version
+  only at the root.
 - `.corepack.env` is ignored: Corepack reads `COREPACK_*` variables from that file in the
   repository, and `COREPACK_ENABLE_UNSAFE_CUSTOM_URLS=1` there lets the `packageManager` field name
   any URL as the Yarn to download and run.
@@ -179,7 +187,8 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 ## Security
 
 - No repository-controlled code runs from the sanitize step onward: no repository `.yarnrc.yml`,
-  Yarn plugins, `yarnPath`, lifecycle scripts, `YARN_*` overrides, `.corepack.env` or package bins,
+  Yarn plugins, `yarnPath`, lifecycle scripts, `YARN_*` overrides, `.corepack.env`, package bins or
+  a Yarn named by a workspace,
   and no `BASH_ENV` or `ENV` from earlier steps (the runner refuses `NODE_OPTIONS` from
   `$GITHUB_ENV`).
 - Packages are published only to `https://registry.npmjs.org`, and looked up only there. `pkdiff`
@@ -193,8 +202,9 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 
 ## Tests
 
-`test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims (the `npm` shim fails
-unless `npm view` is pinned to `https://registry.npmjs.org`), that `install-pkdiff.sh` runs
+`test/publish-modes.sh` tests mode selection with `yarn`, `corepack` and `npm` shims (the `yarn`
+shim packs and publishes only through `corepack yarn@<the root's version>`, and the `npm` shim
+fails unless `npm view` is pinned to `https://registry.npmjs.org`), that `install-pkdiff.sh` runs
 `npm ci --ignore-scripts --install-strategy=shallow --registry https://registry.npmjs.org` in a new
 directory and fails if `diff2html` isn't nested under `pkdiff` afterwards, that
 `pkdiff/package-lock.json` is lockfile version 3, nests `pkdiff`'s dependencies under it (`pkdiff`
@@ -210,7 +220,8 @@ except the action's own, and that real Corepack then ignores a `.corepack.env` t
 the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
 real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, a dry run that writes
 a `pkdiff` report for a package on npm (with `npm_config_install_strategy=linked` set in
-`$GITHUB_ENV`), failures without credentials, a foreign registry, old Yarn, an invalid `dry-run`
+`$GITHUB_ENV`), failures without credentials, a foreign registry, old Yarn, a workspace that names Yarn 1 through
+`packageManager` or `devEngines.packageManager` (rejected by the sanitize step), an invalid `dry-run`
 (rejected before the sanitize step), a polyrepo, a project whose plugin, `yarnPath`, lifecycle
 scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, as would `BASH_ENV` set in
 `$GITHUB_ENV`, that a dry run with `npm_config_registry` and a scope's registry set to an

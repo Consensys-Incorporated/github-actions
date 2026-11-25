@@ -17,6 +17,12 @@
 #                $CANARY_DIR
 #   registry     a package with publishConfig.registry set to another registry
 #   old-yarn     the monorepo fixture with Yarn 4.15.0
+#   workspace-yarn
+#                a public workspace whose `packageManager` names Yarn 1, which
+#                would run `yarn npm publish` as its `npm` script; the script
+#                creates packages/new/npm-script-ran
+#   workspace-dev-engines
+#                the same, with `devEngines.packageManager`
 
 set -euo pipefail
 
@@ -71,6 +77,18 @@ case "$kind" in
     root_manifest
     yarnrc
     pkg packages/new "{\"name\": \"$NEW_PACKAGE_SCOPE/npm-publish-fixture-a\", \"version\": \"1.0.0\", \"publishConfig\": {\"registry\": \"https://npm.example.com/\"}}"
+    ;;
+  workspace-yarn | workspace-dev-engines)
+    root_manifest
+    yarnrc
+    if [[ "$kind" == workspace-yarn ]]; then
+      manager='{"packageManager": "yarn@1.22.22"}'
+    else
+      manager='{"devEngines": {"packageManager": {"name": "yarn", "version": "1.22.22"}}}'
+    fi
+    pkg packages/new "$(jq -n --arg name "$NEW_PACKAGE_SCOPE/npm-publish-fixture-a" --argjson manager "$manager" '{
+      name: $name, version: "1.0.0", scripts: {npm: "touch npm-script-ran"}
+    } + $manager')"
     ;;
   canary)
     : "${CANARY_DIR:?}"

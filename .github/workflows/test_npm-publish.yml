@@ -166,11 +166,16 @@ jobs:
       matrix:
         # registry: publishConfig.registry points elsewhere.
         # old-yarn: Yarn 4.15.0.
+        # workspace-yarn, workspace-dev-engines: a workspace names Yarn 1.
         # invalid dry-run: rejected before anything runs.
         include:
           - kind: registry
             dry-run: 'true'
           - kind: old-yarn
+            dry-run: 'true'
+          - kind: workspace-yarn
+            dry-run: 'true'
+          - kind: workspace-dev-engines
             dry-run: 'true'
           - kind: monorepo
             dry-run: 'yes'
@@ -202,6 +207,14 @@ jobs:
         run: |
           [[ "$OUTCOME" == "failure" ]]
           [[ -z "$(find "$RUNNER_TEMP" -name '*.tgz')" ]]
+      # The sanitize step rejects the workspace, so the Publish step, which
+      # creates the pack directory first, doesn't run. (Without the check,
+      # Yarn 1's pack fails later, so the failure alone proves nothing.)
+      - name: Assert the sanitize step rejected the workspace
+        if: ${{ startsWith(matrix.kind, 'workspace-') }}
+        run: |
+          test ! -e "$RUNNER_TEMP/$PACK_DIR_NAME"
+          test ! -e packages/new/npm-script-ran
       - name: Assert the sanitize step did not run
         if: ${{ matrix.before-sanitize }}
         run: |

@@ -41,6 +41,15 @@ if [[ ! "$yarn_major" =~ ^[0-9]+$ || ! "$yarn_minor" =~ ^[0-9]+$ ]] ||
   exit 1
 fi
 
+# publish.sh runs this Yarn, the root's, in every workspace. `yarn` there would
+# be the Yarn that the workspace's nearest package.json names: Corepack
+# resolves it per directory. Not YARN_*: environment.sh unsets those.
+if [[ ! "$yarn_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  printf '::error::Unexpected Yarn version: %q\n' "$yarn_version"
+  exit 1
+fi
+export ROOT_YARN_VERSION="$yarn_version"
+
 if [[ -z "${PUBLISH_NPM_TAG:-}" ]]; then
   echo "::error::'npm-tag' not set."
   exit 1

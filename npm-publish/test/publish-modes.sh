@@ -83,7 +83,9 @@ EOF
 
 # yarn: logs its arguments and whether YARN_NPM_AUTH_TOKEN is set; implements
 # --version, `workspaces list` (prints $SHIM_WORKSPACES) and `pack --out`.
-# Prints a workflow command, as a packed file's name could.
+# Prints a workflow command, as a packed file's name could. Packs and
+# publishes only through the corepack shim: plain `yarn` in a workspace runs
+# the Yarn that the workspace names.
 cat >"$SHIMS/yarn" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "--version" ]]; then
@@ -93,6 +95,10 @@ fi
 if [[ "$1 $2" == "workspaces list" ]]; then
   printf '%s\n' "$SHIM_WORKSPACES"
   exit 0
+fi
+if [[ -z "${SHIM_VIA_COREPACK:-}" ]]; then
+  echo "yarn shim: $1 run without corepack yarn@<version>" >&2
+  exit 1
 fi
 printf 'yarn' >>"$SHIM_LOG"
 printf ' %q' "$@" >>"$SHIM_LOG"
@@ -106,7 +112,20 @@ if [[ "$1" == "pack" && "$2" == "--out" ]]; then
   echo "tarball of $name@$version" >"$out"
 fi
 EOF
-chmod +x "$SHIMS/npm" "$SHIMS/yarn"
+
+# corepack: `corepack yarn@<version> <args>` runs the yarn shim with <args>,
+# but only if <version> is the root's ($SHIM_YARN_VERSION, as `yarn
+# --version` prints it).
+cat >"$SHIMS/corepack" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" != "yarn@${SHIM_YARN_VERSION:-4.18.1}" ]]; then
+  echo "corepack shim: expected yarn@${SHIM_YARN_VERSION:-4.18.1}, got $1" >&2
+  exit 1
+fi
+shift
+SHIM_VIA_COREPACK=1 exec "$(dirname "$0")/yarn" "$@"
+EOF
+chmod +x "$SHIMS/npm" "$SHIMS/yarn" "$SHIMS/corepack"
 
 PKG="$WORK/pkg"
 mkdir -p "$PKG"
@@ -132,7 +151,7 @@ run_publish() {
   LOG="$(cd "$PKG" && env -u ACTIONS_ID_TOKEN_REQUEST_URL -u YARN_NPM_AUTH_TOKEN \
     PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" \
     PACK_DIR="$PACK_DIR" GITHUB_STEP_SUMMARY="$WORK/summary" \
-    PUBLISH_NPM_TAG=next DRY_RUN= REPOSITORY_VISIBILITY=public "$@" "$SCRIPTS/publish.sh" 2>&1)"
+    PUBLISH_NPM_TAG=next DRY_RUN= REPOSITORY_VISIBILITY=public ROOT_YARN_VERSION=4.18.1 "$@" "$SCRIPTS/publish.sh" 2>&1)"
   STATUS=$?
   set -e
 }
@@ -229,6 +248,14 @@ run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc PUBLISH_NPM_TAG='beta 
 check "npm-tag is passed as one argument" \
   published_with 'yarn npm publish --tag beta\ tag --staged --provenance [token=]'
 
+# Yarn runs as the root's version through Corepack, never as the `yarn` that
+# the workspace's package.json would select.
+run_publish no YARN_NPM_AUTH_TOKEN=token ROOT_YARN_VERSION=4.17.0 SHIM_YARN_VERSION=4.17.0
+check "the root's Yarn version publishes, through corepack yarn@<version>" \
+  published_with 'yarn npm publish --tag next [token=set]'
+run_publish no YARN_NPM_AUTH_TOKEN=token ROOT_YARN_VERSION=
+check "without ROOT_YARN_VERSION: fails without publishing" failed_with "ROOT_YARN_VERSION must be set"
+
 echo '{"name": "@test/npm-publish-modes", "version": "0.0.0"}' >"$PKG/package.json"
 run_publish no YARN_NPM_AUTH_TOKEN=token
 check "version 0.0.0 is skipped" bash -c "(($STATUS == 0)) && [[ ! -s '$WORK/shim.log' ]]"
@@ -260,8 +287,11 @@ run_main SHIM_YARN_VERSION=3.8.7
 check "Yarn 3 fails" failed_with "Yarn 4.16.0 or higher is required"
 
 run_main SHIM_YARN_VERSION=4.16.0
-check "Yarn 4.16.0 is accepted; packing sets dry-run=true" \
+check "Yarn 4.16.0 is accepted, and packs as yarn@4.16.0; packing sets dry-run=true" \
   bash -c "(($STATUS == 0)) && grep -q 'yarn pack' '$WORK/shim.log' && grep -qx 'dry-run=true' '$WORK/output'"
+
+run_main SHIM_YARN_VERSION='4.18.1 --help'
+check "a Yarn version that isn't MAJOR.MINOR.PATCH fails" failed_with "Unexpected Yarn version"
 
 run_main RUNNER_DEBUG=1 DRY_RUN= YARN_NPM_AUTH_TOKEN=npm_secret_value
 check "RUNNER_DEBUG=1: main.sh doesn't print the token" no_token_in_log npm_secret_value
