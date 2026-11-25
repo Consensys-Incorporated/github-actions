@@ -19,18 +19,39 @@ failures=0
 mkdir -p "$SHIMS"
 
 # npm: `npm view [options] -- <spec> version` prints a version iff <spec> is a
-# line of $NPM_PUBLISHED, fails with E500 if the file has a "!error" line, and
+# line of $WORK/published (found next to the shim: npm view runs with an empty
+# environment), fails with E500 if the file has a "!error" line, and
 # with E404 otherwise. Fails if <spec> doesn't follow `--`, or if the options
 # don't include `--registry https://registry.npmjs.org` and, for a scoped
 # <spec>, `--@<scope>:registry=https://registry.npmjs.org`: npm_config_*
-# variables from the caller's job could otherwise redirect the lookup.
+# variables from the caller's job could otherwise redirect the lookup. Fails,
+# too, if a proxy or npm_config_* variable (in any case) reaches it, or if
+# `--userconfig` and `--globalconfig` aren't empty files: a proxy could answer
+# 404 for the registry.
 cat >"$SHIMS/npm" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "view" ]]; then
+  published="$(dirname "$0")/../published"
+  if env | grep -qiE '^(https?_proxy|all_proxy|npm_config_)'; then
+    echo "npm shim: proxy or npm_config_* variable in npm view's environment" >&2
+    exit 1
+  fi
   options=()
   while (($# > 0)) && [[ "$1" != "--" ]]; do
     options+=("$1")
     shift
+  done
+  for config in --userconfig --globalconfig; do
+    file=""
+    for ((i = 0; i < ${#options[@]} - 1; i++)); do
+      if [[ "${options[i]}" == "$config" ]]; then
+        file="${options[i + 1]}"
+      fi
+    done
+    if [[ -z "$file" || ! -f "$file" || -s "$file" ]]; then
+      echo "npm shim: $config is not an empty file" >&2
+      exit 1
+    fi
   done
   if (($# < 2)); then
     echo "npm shim: no -- before the spec" >&2
@@ -44,11 +65,11 @@ if [[ "$1" == "view" ]]; then
     echo "npm shim: no --${2%%/*}:registry=https://registry.npmjs.org" >&2
     exit 1
   fi
-  if grep -qxF -- "$2" "$NPM_PUBLISHED"; then
+  if grep -qxF -- "$2" "$published"; then
     echo '"1.0.0"'
     exit 0
   fi
-  if grep -qxF -- '!error' "$NPM_PUBLISHED"; then
+  if grep -qxF -- '!error' "$published"; then
     echo '{"error": {"code": "E500", "summary": "Internal Server Error"}}'
     echo "npm error code E500" >&2
     exit 1
@@ -83,7 +104,9 @@ EOF
 
 # yarn: logs its arguments and whether YARN_NPM_AUTH_TOKEN is set; implements
 # --version, `workspaces list` (prints $SHIM_WORKSPACES) and `pack --out`.
-# Prints a workflow command, as a packed file's name could.
+# Prints a workflow command, as a packed file's name could. Packs and
+# publishes only through the corepack shim: plain `yarn` in a workspace runs
+# the Yarn that the workspace names.
 cat >"$SHIMS/yarn" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "--version" ]]; then
@@ -93,6 +116,10 @@ fi
 if [[ "$1 $2" == "workspaces list" ]]; then
   printf '%s\n' "$SHIM_WORKSPACES"
   exit 0
+fi
+if [[ -z "${SHIM_VIA_COREPACK:-}" ]]; then
+  echo "yarn shim: $1 run without corepack yarn@<version>" >&2
+  exit 1
 fi
 printf 'yarn' >>"$SHIM_LOG"
 printf ' %q' "$@" >>"$SHIM_LOG"
@@ -106,7 +133,20 @@ if [[ "$1" == "pack" && "$2" == "--out" ]]; then
   echo "tarball of $name@$version" >"$out"
 fi
 EOF
-chmod +x "$SHIMS/npm" "$SHIMS/yarn"
+
+# corepack: `corepack yarn@<version> <args>` runs the yarn shim with <args>,
+# but only if <version> is the root's ($SHIM_YARN_VERSION, as `yarn
+# --version` prints it).
+cat >"$SHIMS/corepack" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" != "yarn@${SHIM_YARN_VERSION:-4.18.1}" ]]; then
+  echo "corepack shim: expected yarn@${SHIM_YARN_VERSION:-4.18.1}, got $1" >&2
+  exit 1
+fi
+shift
+SHIM_VIA_COREPACK=1 exec "$(dirname "$0")/yarn" "$@"
+EOF
+chmod +x "$SHIMS/npm" "$SHIMS/yarn" "$SHIMS/corepack"
 
 PKG="$WORK/pkg"
 mkdir -p "$PKG"
@@ -130,9 +170,9 @@ run_publish() {
   rm -f "$TARBALL"
   set +e
   LOG="$(cd "$PKG" && env -u ACTIONS_ID_TOKEN_REQUEST_URL -u YARN_NPM_AUTH_TOKEN \
-    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" \
+    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" \
     PACK_DIR="$PACK_DIR" GITHUB_STEP_SUMMARY="$WORK/summary" \
-    PUBLISH_NPM_TAG=next DRY_RUN= REPOSITORY_VISIBILITY=public "$@" "$SCRIPTS/publish.sh" 2>&1)"
+    PUBLISH_NPM_TAG=next DRY_RUN= REPOSITORY_VISIBILITY=public ROOT_YARN_VERSION=4.18.1 "$@" "$SCRIPTS/publish.sh" 2>&1)"
   STATUS=$?
   set -e
 }
@@ -199,6 +239,15 @@ check "npm lookup error other than 404: fails without publishing" failed_with "'
 run_publish yes DRY_RUN=false YARN_NPM_AUTH_TOKEN=token
 check "existing package without OIDC, dry-run false: fails" failed_with "OIDC is not available"
 
+# A proxy could answer 404 for the registry, which would send an existing
+# package down the token path; npm view runs without the caller's proxy and
+# npm_config_* variables.
+proxies=(HTTPS_PROXY=http://proxy.invalid https_proxy=http://proxy.invalid
+  npm_config_https_proxy=http://proxy.invalid NPM_CONFIG_PROXY=http://proxy.invalid)
+run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc YARN_NPM_AUTH_TOKEN=token "${proxies[@]}"
+check "existing package with proxy variables set: still found on npm, OIDC publish" \
+  published_with 'yarn npm publish --tag next --staged --provenance [token=]'
+
 for value in True yes 1; do
   run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc DRY_RUN="$value"
   check "dry-run '$value' fails without publishing" failed_with "'dry-run' must be 'true', 'false' or empty"
@@ -229,6 +278,14 @@ run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc PUBLISH_NPM_TAG='beta 
 check "npm-tag is passed as one argument" \
   published_with 'yarn npm publish --tag beta\ tag --staged --provenance [token=]'
 
+# Yarn runs as the root's version through Corepack, never as the `yarn` that
+# the workspace's package.json would select.
+run_publish no YARN_NPM_AUTH_TOKEN=token ROOT_YARN_VERSION=4.17.0 SHIM_YARN_VERSION=4.17.0
+check "the root's Yarn version publishes, through corepack yarn@<version>" \
+  published_with 'yarn npm publish --tag next [token=set]'
+run_publish no YARN_NPM_AUTH_TOKEN=token ROOT_YARN_VERSION=
+check "without ROOT_YARN_VERSION: fails without publishing" failed_with "ROOT_YARN_VERSION must be set"
+
 echo '{"name": "@test/npm-publish-modes", "version": "0.0.0"}' >"$PKG/package.json"
 run_publish no YARN_NPM_AUTH_TOKEN=token
 check "version 0.0.0 is skipped" bash -c "(($STATUS == 0)) && [[ ! -s '$WORK/shim.log' ]]"
@@ -240,7 +297,7 @@ run_main() {
   : >"$WORK/output"
   set +e
   LOG="$(cd "${MAIN_DIR:-$PKG}" && env -u ACTIONS_ID_TOKEN_REQUEST_URL \
-    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" PACK_DIR="$PACK_DIR" \
+    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" \
     GITHUB_OUTPUT="$WORK/output" GITHUB_STEP_SUMMARY="$WORK/summary" \
     PUBLISH_NPM_TAG=next DRY_RUN=true YARN_RC_FILENAME=.yarnrc-test.yml "$@" "$SCRIPTS/main.sh" 2>&1)"
   STATUS=$?
@@ -260,8 +317,11 @@ run_main SHIM_YARN_VERSION=3.8.7
 check "Yarn 3 fails" failed_with "Yarn 4.16.0 or higher is required"
 
 run_main SHIM_YARN_VERSION=4.16.0
-check "Yarn 4.16.0 is accepted; packing sets dry-run=true" \
+check "Yarn 4.16.0 is accepted, and packs as yarn@4.16.0; packing sets dry-run=true" \
   bash -c "(($STATUS == 0)) && grep -q 'yarn pack' '$WORK/shim.log' && grep -qx 'dry-run=true' '$WORK/output'"
+
+run_main SHIM_YARN_VERSION='4.18.1 --help'
+check "a Yarn version that isn't MAJOR.MINOR.PATCH fails" failed_with "Unexpected Yarn version"
 
 run_main RUNNER_DEBUG=1 DRY_RUN= YARN_NPM_AUTH_TOKEN=npm_secret_value
 check "RUNNER_DEBUG=1: main.sh doesn't print the token" no_token_in_log npm_secret_value
@@ -270,6 +330,9 @@ echo "@test/npm-publish-modes@1.2.3" >"$WORK/published"
 run_main
 check "polyrepo whose version is already on npm: nothing published, dry-run=false" \
   bash -c "(($STATUS == 0)) && grep -q 'No packages need publishing' <<<\"\$1\" && [[ ! -s '$WORK/shim.log' ]] && grep -qx 'dry-run=false' '$WORK/output'" _ "$LOG"
+run_main "${proxies[@]}"
+check "polyrepo whose version is already on npm, with proxy variables set: nothing published" \
+  bash -c "(($STATUS == 0)) && grep -q 'No packages need publishing' <<<\"\$1\" && [[ ! -s '$WORK/shim.log' ]]" _ "$LOG"
 : >"$WORK/published"
 
 echo '{"name": "@test/npm-publish-modes", "version": "1.2.3", "private": true}' >"$PKG/package.json"
