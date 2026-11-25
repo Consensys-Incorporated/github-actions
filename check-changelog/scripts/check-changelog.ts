@@ -8,8 +8,10 @@
 
 import { parseChangelog } from '@metamask/auto-changelog';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import semver from 'semver';
 
 import { analyzePackageJsonDiff } from './package-json-diff.ts';
 import type { PackageJsonChanges } from './package-json-diff.ts';
@@ -25,12 +27,55 @@ type PackageInfo = { base: string; package: string };
 type ChangedPackage = PackageInfo & { newVersion?: string | undefined };
 
 /**
- * Logs an error message in red.
+ * The token that resumes workflow commands, while they are stopped.
+ */
+let stopToken: string | undefined;
+
+/**
+ * Stops the runner from processing workflow commands in the output, which
+ * includes text from the pull request (changelog lines, versions, paths). A
+ * `\r` in that text starts a new line for the runner, which could then be a
+ * `::command::`.
+ */
+function stopCommands(): void {
+  stopToken = randomUUID();
+  console.log(`::stop-commands::${stopToken}`);
+}
+
+/**
+ * Resumes workflow commands stopped by stopCommands.
+ */
+function resumeCommands(): void {
+  if (stopToken !== undefined) {
+    console.log(`::${stopToken}::`);
+    stopToken = undefined;
+  }
+}
+
+/**
+ * Emits a warning annotation. Commands are resumed around it, and the message
+ * is escaped so it stays on one line.
+ *
+ * @param message - The message.
+ */
+function logWarning(message: string): void {
+  const stopped = stopToken !== undefined;
+  resumeCommands();
+  const escaped = message.replace(/%/gu, '%25').replace(/\r/gu, '%0D').replace(/\n/gu, '%0A');
+  console.log(`::warning::${escaped}`);
+  if (stopped) {
+    stopCommands();
+  }
+}
+
+/**
+ * Logs an error message in red. It goes to stdout, like the rest of the
+ * output, so the runner sees it in order with the stop-commands markers.
  *
  * @param message - The message.
  */
 function logError(message: string): void {
-  console.error(`\x1b[31m${message}\x1b[0m`);
+  console.log(`\x1b[31m${message}\x1b[0m`);
 }
 
 /**
@@ -60,13 +105,32 @@ function git(repoPath: string, args: string[]): string {
 }
 
 /**
+ * Reads a file from the checkout, refusing one that is, or is under, a
+ * symbolic link: the pull request controls the checkout, and a link could
+ * point at any file on the runner, whose contents could then end up in an
+ * error message.
+ *
+ * @param repoPath - The repository.
+ * @param filePath - Path relative to the repository.
+ * @returns The contents. Throws ENOENT as fs.readFile does.
+ */
+async function readRepoFile(repoPath: string, filePath: string): Promise<string> {
+  const fullPath = path.join(repoPath, filePath);
+  const realPath = await fs.realpath(fullPath);
+  if (realPath !== path.join(await fs.realpath(repoPath), filePath)) {
+    throw new Error(`${filePath} is a symbolic link or is under one; refusing to read it`);
+  }
+  return fs.readFile(realPath, 'utf-8');
+}
+
+/**
  * Gets the workspace patterns from the root package.json (array form only).
  *
  * @param repoPath - The repository.
  * @returns The patterns, or an empty array.
  */
 async function getWorkspacePatterns(repoPath: string): Promise<string[]> {
-  const content = await fs.readFile(path.join(repoPath, 'package.json'), 'utf-8');
+  const content = await readRepoFile(repoPath, 'package.json');
   const packageJson = JSON.parse(content) as PackageJson;
   if (!Array.isArray(packageJson.workspaces)) {
     return [];
@@ -118,8 +182,8 @@ function getChangedFiles(repoPath: string, baseRef: string): string[] {
     // is usually present already.
     try {
       git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${baseRef}`]);
-      console.warn(
-        `::warning::Could not fetch ${baseRef}; using origin/${baseRef} from the checkout. ${errorMessage(error)}`,
+      logWarning(
+        `Could not fetch ${baseRef}; using origin/${baseRef} from the checkout. ${errorMessage(error)}`,
       );
     } catch {
       logError(`Failed to get changed files: ${errorMessage(error)}`);
@@ -128,8 +192,17 @@ function getChangedFiles(repoPath: string, baseRef: string): string[] {
   }
 
   try {
-    return git(repoPath, ['-c', 'core.quotePath=false', 'diff', '--name-only', `origin/${baseRef}...HEAD`])
-      .split('\n')
+    // -z: otherwise git C-quotes a path with control characters, which then
+    // maps to no package, so a change could be hidden that way.
+    return git(repoPath, [
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '-z',
+      '--name-only',
+      `origin/${baseRef}...HEAD`,
+    ])
+      .split('\0')
       .filter(Boolean);
   } catch (error) {
     logError(`Failed to get changed files: ${errorMessage(error)}`);
@@ -160,19 +233,48 @@ function analyzePackageJsonChanges(
 }
 
 /**
- * Whether a package.json has `"private": true`.
+ * Whether a file existed at the merge base and is deleted at HEAD.
+ *
+ * @param repoPath - The repository.
+ * @param filePath - Path relative to the repository.
+ * @param baseRef - The base branch.
+ * @returns True if the diff since the merge base deletes the file.
+ */
+function isDeletedSinceBase(repoPath: string, filePath: string, baseRef: string): boolean {
+  // --no-renames: a moved package must count as deleted from its old path.
+  const output = git(repoPath, [
+    'diff',
+    '--no-renames',
+    '--name-only',
+    '--diff-filter=D',
+    `origin/${baseRef}...HEAD`,
+    '--',
+    filePath,
+  ]);
+  return output !== '';
+}
+
+/**
+ * Reads a package's visibility from its package.json.
  *
  * @param repoPath - The repository.
  * @param packageJsonPath - Path relative to the repository.
- * @returns True if private; false if not, or if unreadable.
+ * @returns 'missing' if the file does not exist, 'private' if it has
+ * `"private": true`, otherwise 'public' (also if it can't be read or parsed).
  */
-async function isPrivatePackage(repoPath: string, packageJsonPath: string): Promise<boolean> {
+async function getPackageVisibility(
+  repoPath: string,
+  packageJsonPath: string,
+): Promise<'missing' | 'private' | 'public'> {
   try {
-    const content = await fs.readFile(path.join(repoPath, packageJsonPath), 'utf-8');
-    return (JSON.parse(content) as PackageJson).private === true;
+    const content = await readRepoFile(repoPath, packageJsonPath);
+    return (JSON.parse(content) as PackageJson).private === true ? 'private' : 'public';
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return 'missing';
+    }
     logError(`Failed to check if package is private: ${errorMessage(error)}`);
-    return false;
+    return 'public';
   }
 }
 
@@ -199,7 +301,7 @@ async function checkChangelogFile({
   packageVersion?: string | null;
 }): Promise<void> {
   try {
-    const changelogContent = await fs.readFile(path.join(repoPath, changelogPath), 'utf-8');
+    const changelogContent = await readRepoFile(repoPath, changelogPath);
     if (!changelogContent) {
       throw new Error('CHANGELOG.md is empty or missing');
     }
@@ -212,6 +314,13 @@ async function checkChangelogFile({
 
     let releaseSection = 'Unreleased';
     if (packageVersion) {
+      // auto-changelog rejects non-semver release headers, so no section
+      // could match.
+      if (!semver.valid(packageVersion)) {
+        throw new Error(
+          `The new version '${packageVersion}' in ${path.join(path.dirname(changelogPath), 'package.json')} is not valid semver, so its changelog section can't be checked. If the changelog is up to date, you can bypass this check by adding the 'no-changelog' label to the PR.`,
+        );
+      }
       const versionChanges = changelog.getReleaseChanges(packageVersion);
       if (versionChanges && Object.keys(versionChanges).length > 0) {
         releaseSection = packageVersion;
@@ -255,7 +364,7 @@ async function getChangedPackages(
   baseRef: string,
 ): Promise<ChangedPackage[]> {
   const changedPackages = new Map<string, ChangedPackage>();
-  const privatePackageCache = new Map<string, boolean>();
+  const visibilityCache = new Map<string, 'missing' | 'private' | 'public'>();
 
   for (const file of files) {
     if (file.startsWith('.github/workflows/')) {
@@ -267,13 +376,29 @@ async function getChangedPackages(
       continue;
     }
 
-    let isPrivate = privatePackageCache.get(packageInfo.package);
-    if (isPrivate === undefined) {
-      const packageJsonPath = path.join(packageInfo.base, packageInfo.package, 'package.json');
-      isPrivate = await isPrivatePackage(repoPath, packageJsonPath);
-      privatePackageCache.set(packageInfo.package, isPrivate);
+    // Keyed by directory: two workspace roots can hold packages with the
+    // same directory name.
+    const packageDir = path.join(packageInfo.base, packageInfo.package);
+    let visibility = visibilityCache.get(packageDir);
+    if (visibility === undefined) {
+      const packageJsonPath = path.join(packageDir, 'package.json');
+      visibility = await getPackageVisibility(repoPath, packageJsonPath);
+      if (visibility === 'missing') {
+        // Only a package deleted by this pull request is skipped. Otherwise
+        // the directory was never a package: getPackageInfo maps a file to
+        // the first segment after the wildcard's prefix, which is the package
+        // directory only for `<root>/*` patterns (`packages/*/*` maps
+        // packages/group/foo/src/x.ts to packages/group).
+        if (!isDeletedSinceBase(repoPath, packageJsonPath, baseRef)) {
+          throw new Error(
+            `${file} maps to ${packageDir}, which has no package.json at the pull request head or the merge base. Only workspace patterns of the form <root>/* are supported.`,
+          );
+        }
+        console.log(`Skipping ${packageDir}: its package.json was deleted`);
+      }
+      visibilityCache.set(packageDir, visibility);
     }
-    if (isPrivate) {
+    if (visibility !== 'public') {
       continue;
     }
 
@@ -287,38 +412,40 @@ async function getChangedPackages(
     }
 
     let newVersion: string | undefined;
-    if (file.endsWith('package.json')) {
+    // Only the package's manifest, not other files ending in package.json
+    // (schema-package.json) or nested package.json files (test fixtures).
+    if (file === path.join(packageDir, 'package.json')) {
       const changes = analyzePackageJsonChanges(repoPath, file, baseRef);
       if (!changes.hasChanges) {
         continue;
       }
       if (changes.isVersionOnly) {
-        console.log(`Skipping package.json in ${packageInfo.package} as it only contains version changes`);
+        console.log(`Skipping package.json in ${packageDir} as it only contains version changes`);
         continue;
       }
       if (changes.isVersionDowngrade) {
         console.log(
-          `Skipping package.json in ${packageInfo.package} as it contains a version downgrade (revert)`,
+          `Skipping package.json in ${packageDir} as it contains a version downgrade (revert)`,
         );
         continue;
       }
       if (changes.isDevDependencyOnly) {
         console.log(
-          `Skipping package.json in ${packageInfo.package} as it only contains dev dependency changes`,
+          `Skipping package.json in ${packageDir} as it only contains dev dependency changes`,
         );
         continue;
       }
       if (changes.isVersionAndDevDependencyOnly) {
         console.log(
-          `Skipping package.json in ${packageInfo.package} as it only contains version and dev dependency changes`,
+          `Skipping package.json in ${packageDir} as it only contains version and dev dependency changes`,
         );
         continue;
       }
       newVersion = changes.newVersion;
     }
 
-    const existing = changedPackages.get(packageInfo.package);
-    changedPackages.set(packageInfo.package, {
+    const existing = changedPackages.get(packageDir);
+    changedPackages.set(packageDir, {
       ...packageInfo,
       newVersion: existing?.newVersion ?? newVersion,
     });
@@ -375,7 +502,8 @@ async function main(argv: string[]): Promise<void> {
 
   const results = await Promise.all(
     changedPackages.map(async (pkg) => {
-      const changelogPath = path.join(pkg.base, pkg.package, 'CHANGELOG.md');
+      const packageDir = path.join(pkg.base, pkg.package);
+      const changelogPath = path.join(packageDir, 'CHANGELOG.md');
       try {
         await checkChangelogFile({
           repoPath: fullRepoPath,
@@ -383,10 +511,10 @@ async function main(argv: string[]): Promise<void> {
           prNumber,
           packageVersion: pkg.newVersion ?? null,
         });
-        console.log(`CHANGELOG.md for ${pkg.package} has been correctly updated.`);
+        console.log(`CHANGELOG.md for ${packageDir} has been correctly updated.`);
         return true;
       } catch (error) {
-        logError(`Changelog check failed for package ${pkg.package}: ${errorMessage(error)}`);
+        logError(`Changelog check failed for package ${packageDir}: ${errorMessage(error)}`);
         return false;
       }
     }),
@@ -398,8 +526,11 @@ async function main(argv: string[]): Promise<void> {
 }
 
 if (import.meta.main) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
-    logError(errorMessage(error));
-    process.exitCode = 1;
-  });
+  stopCommands();
+  main(process.argv.slice(2))
+    .catch((error: unknown) => {
+      logError(errorMessage(error));
+      process.exitCode = 1;
+    })
+    .finally(resumeCommands);
 }

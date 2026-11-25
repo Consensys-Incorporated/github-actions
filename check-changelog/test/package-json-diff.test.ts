@@ -143,6 +143,43 @@ describe('analyzePackageJsonDiff', () => {
     assert.equal(result.newVersion, '1.1.0');
   });
 
+  it('does not run the devDependencies block past a changed closing brace', () => {
+    const result = analyzePackageJsonDiff(
+      diff(
+        ...HEAD,
+        '   "version": "1.0.0",',
+        ...DEPS,
+        '   "devDependencies": {',
+        '     "some-dev-dep": "^1.0.0"',
+        '-  }',
+        '+  },',
+        '+  "files": ["dist"]',
+        ' }',
+      ),
+    );
+    assert.equal(result.isDevDependencyOnly, false);
+  });
+
+  it('classifies a change to a version that is not valid semver', () => {
+    const result = analyzePackageJsonDiff(
+      diff(
+        ...HEAD,
+        '-  "version": "1.0.0",',
+        '+  "version": "1.1",',
+        '   "dependencies": {',
+        '-    "some-dep": "^1.0.0"',
+        '+    "some-dep": "^2.0.0"',
+        '   },',
+        ...DEV_DEPS,
+        ' }',
+      ),
+    );
+    assert.equal(result.hasChanges, true);
+    assert.equal(result.isVersionOnly, false);
+    assert.equal(result.isVersionDowngrade, false);
+    assert.equal(result.newVersion, '1.1');
+  });
+
   it('treats a dependencies change as user-facing', () => {
     const result = analyzePackageJsonDiff(
       diff(
@@ -166,7 +203,7 @@ describe('getDevDependencyLines', () => {
     assert.deepEqual(getDevDependencyLines(diff(...HEAD, '+  "x": 1', ' }'), ['+  "x": 1']), []);
   });
 
-  it('ends the block at the first closing brace (upstream quirk)', () => {
+  it('ends the block at the first closing brace', () => {
     const output = diff(
       ...HEAD,
       '   "devDependencies": {',
@@ -178,6 +215,29 @@ describe('getDevDependencyLines', () => {
     );
     assert.deepEqual(getDevDependencyLines(output, ['-  "files": []', '+  "files": ["dist"]']), []);
   });
+
+  it('ends the block at a removed or added closing brace', () => {
+    const output = diff(
+      ...HEAD,
+      '   "devDependencies": {',
+      '-    "a": "^1.0.0"',
+      '+    "a": "^2.0.0"',
+      '-  }',
+      '+  },',
+      '+  "files": ["dist"]',
+      ' }',
+    );
+    assert.deepEqual(
+      getDevDependencyLines(output, [
+        '-    "a": "^1.0.0"',
+        '+    "a": "^2.0.0"',
+        '-  }',
+        '+  },',
+        '+  "files": ["dist"]',
+      ]),
+      ['-    "a": "^1.0.0"', '+    "a": "^2.0.0"', '-  }'],
+    );
+  });
 });
 
 describe('isVersionDowngrade', () => {
@@ -185,5 +245,10 @@ describe('isVersionDowngrade', () => {
     assert.equal(isVersionDowngrade('1.10.0', '1.9.0'), true);
     assert.equal(isVersionDowngrade('1.9.0', '1.10.0'), false);
     assert.equal(isVersionDowngrade('1.0.0', '1.0.0-rc.1'), true);
+  });
+
+  it('is false if either version is not valid semver', () => {
+    assert.equal(isVersionDowngrade('1.1.0', '1.0'), false);
+    assert.equal(isVersionDowngrade('latest', '1.0.0'), false);
   });
 });

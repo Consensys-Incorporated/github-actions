@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Analysis of a `git diff -U9999` of a workspace package.json, ported from
-// MetaMask/github-tools src/changelog-check.mts. Known quirks are kept: the
-// devDependencies block is the first `"devDependencies":` line up to the next
-// line matching /^\s*\}/, and a changed line is located by its first exact
-// occurrence in the diff.
+// MetaMask/github-tools src/changelog-check.mts. The devDependencies block
+// ends at the first unchanged, removed or added line starting with `}` that
+// follows a `"devDependencies":` line, and starts at the last
+// `"devDependencies":` line before it. As upstream, a changed line is located
+// by its first exact occurrence in the diff.
 
 import semver from 'semver';
 
@@ -40,11 +41,14 @@ export function getDevDependencyLines(diffOutput: string, nonVersionLines: strin
   let devDependencySectionStart: number | undefined;
   let devDependencySectionEnd: number | undefined;
 
+  // The end pattern allows for the diff marker: upstream matched /^\s*\}/
+  // against the whole line, which misses a removed or added closing brace and
+  // runs the block on to the next unchanged one.
   for (let i = 0; i < allLines.length; i++) {
     const line = allLines[i] as string;
     if (line.includes('"devDependencies":')) {
       devDependencySectionStart = i;
-    } else if (devDependencySectionStart && /^\s*\}/u.test(line)) {
+    } else if (devDependencySectionStart && /^[ +-]\s*\}/u.test(line)) {
       devDependencySectionEnd = i;
       break;
     }
@@ -73,10 +77,14 @@ export function getDevDependencyLines(diffOutput: string, nonVersionLines: strin
  *
  * @param oldVersion - The version before the change.
  * @param newVersion - The version after the change.
- * @returns True if `newVersion` is lower.
+ * @returns True if `newVersion` is lower; false if it isn't, or if either
+ * version is not valid semver (it can't be shown to be a revert).
  */
 export function isVersionDowngrade(oldVersion: string, newVersion: string): boolean {
-  return new semver.SemVer(newVersion).compare(new semver.SemVer(oldVersion)) < 0;
+  if (!semver.valid(oldVersion) || !semver.valid(newVersion)) {
+    return false;
+  }
+  return semver.lt(newVersion, oldVersion);
 }
 
 /**
