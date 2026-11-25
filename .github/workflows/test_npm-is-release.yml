@@ -1,0 +1,66 @@
+name: Test npm-is-release
+
+on:
+  push:
+    paths:
+      - 'npm-is-release/**'
+      - '.github/workflows/test_npm-is-release.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  script:
+    name: Script
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: npm-is-release/test/fixtures.sh
+
+  # The action with skip-checkout, in a workspace holding a depth-2 clone of
+  # a fixture whose version changed two commits back.
+  action-skip-checkout:
+    name: Action with skip-checkout (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            commit-starts-with: 'Release [version],Release v[version],Release/[version],Release/v[version],Release `[version]`'
+            expected: 'true'
+          - name: prefix mismatch
+            commit-starts-with: 'Release v[version]'
+            expected: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Prepare fixture workspace
+        id: fixture
+        run: |
+          dir="$RUNNER_TEMP/fixture"
+          actions-repo/npm-is-release/test/fixtures.sh --prepare-workspace "$dir" >>"$GITHUB_OUTPUT"
+          shopt -s dotglob
+          mv "$dir"/* .
+      - name: Run action
+        id: action
+        uses: ./actions-repo/npm-is-release
+        with:
+          skip-checkout: true
+          before: ${{ steps.fixture.outputs.before }}
+          commit-starts-with: ${{ matrix.commit-starts-with }}
+      - name: Assert IS_RELEASE
+        env:
+          IS_RELEASE: ${{ steps.action.outputs.IS_RELEASE }}
+          EXPECTED: ${{ matrix.expected }}
+        run: |
+          if [[ "$IS_RELEASE" != "$EXPECTED" ]]; then
+            echo "::error::Expected IS_RELEASE=$EXPECTED, got '$IS_RELEASE'"
+            exit 1
+          fi

@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'npm-is-release'
+description: >-
+  Decide whether the pushed commit is a release: the root package.json
+  version changed since the previous commit and, optionally, the commit
+  message starts with one of a set of prefixes. Fails if either version is
+  missing or not valid semver.
+
+inputs:
+  commit-starts-with:
+    description: >-
+      Prefixes separated by commas or newlines, one of which the commit
+      message must start with. Surrounding whitespace is trimmed and empty
+      prefixes are ignored. `[version]` is replaced by the new version.
+      Matched literally. If empty, a version change alone makes a release.
+    required: false
+    default: ''
+  commit-message:
+    description: 'The commit message to check. Defaults to the subject of the checked-out commit.'
+    required: false
+    default: ''
+  before:
+    description: >-
+      The full SHA (40 or 64 hexadecimal characters) of the commit to compare
+      with. Defaults to the push event's `before`.
+    required: false
+    default: ${{ github.event.before }}
+  github-token:
+    description: >-
+      Token used only to fetch `before` when the push contained more than one
+      commit. Needs `contents: read`. It is passed to that one `git fetch` and
+      not stored in `.git/config`.
+    required: false
+    default: ${{ github.token }}
+  skip-checkout:
+    description: >-
+      `true` to reuse the caller's checkout, which must have `before`
+      reachable or fetchable (e.g. `fetch-depth: 2` for a single-commit push).
+      The version is read from the committed package.json at HEAD, so
+      uncommitted changes are ignored.
+    required: false
+    default: 'false'
+
+outputs:
+  IS_RELEASE:
+    description: '`true` or `false`.'
+    value: ${{ steps.is-release.outputs.IS_RELEASE }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out repository
+      if: ${{ inputs.skip-checkout != 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        ref: ${{ github.sha }}
+        # This commit and the one before, for the comparison.
+        fetch-depth: 2
+        persist-credentials: false
+
+    - name: Check whether this is a release
+      id: is-release
+      shell: bash
+      env:
+        BEFORE: ${{ inputs.before }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        COMMIT_STARTS_WITH: ${{ inputs.commit-starts-with }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/is-release.sh"'
