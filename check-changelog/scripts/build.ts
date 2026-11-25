@@ -33,6 +33,10 @@ const parseChangelogOnly: Plugin = {
   },
 };
 
+// Empty dist/ first, so that a stale file there shows up in the CI check that
+// the committed dist/ matches a fresh build.
+await fs.rm(DIST, { recursive: true, force: true });
+
 const result = await build({
   absWorkingDir: ROOT,
   entryPoints: ['scripts/check-changelog.ts'],

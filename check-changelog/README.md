@@ -159,7 +159,8 @@ test/fixtures.sh      # end-to-end runs of dist/check-changelog.js against fixtu
 ```
 
 After changing the script or a dependency, run `npm run build` and commit `dist/`. CI rebuilds
-the bundle and fails if `dist/` differs from what is committed. The fixture tests run the bundle,
+the bundle and fails if `dist/` differs from what is committed. The build empties `dist/` first,
+so a committed file that the build doesn't write also fails the check. The fixture tests run the bundle,
 which is what the action ships; `SCRIPT="$PWD/scripts/check-changelog.ts" test/fixtures.sh` runs
 them against the source instead. The unit tests run against the source.
 
