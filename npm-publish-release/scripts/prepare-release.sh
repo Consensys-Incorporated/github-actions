@@ -29,6 +29,14 @@ notes_file="$RELEASE_DIR/notes.md"
 packages_file="$RELEASE_DIR/packages.tsv"
 : >"$packages_file"
 
+# A sparse checkout marks the files it leaves out skip-worktree, and
+# assume-unchanged hides changes. `git diff` reports neither, so the checks
+# below could not see that the working tree differs from HEAD.
+if git ls-files -v | awk '!/^H / { found = 1 } END { exit !found }'; then
+  echo "::error::Files in the index are marked skip-worktree or assume-unchanged (for example by a sparse checkout), so the working tree cannot be checked against HEAD. Use a full checkout."
+  exit 1
+fi
+
 require_committed package.json
 release_version="$(jq -r '.version // empty' package.json)"
 if ! is_semver "$release_version"; then

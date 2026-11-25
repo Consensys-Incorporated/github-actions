@@ -619,6 +619,22 @@ test_uncommitted() {
   expect_uncommitted_failure "workspace missing from the working tree fails" "$dir" \
     "package.json files committed at HEAD are missing from the working tree."
 
+  # Sparse checkout marks the files it leaves out skip-worktree, and
+  # assume-unchanged hides changes, so neither shows up in `git diff`.
+  dir="$WORK/sparse-checkout"
+  (monorepo_fixture "$dir" && git sparse-checkout set --no-cone '/*' '!/packages/b/')
+  expect_uncommitted_failure "workspace left out by a sparse checkout fails" "$dir" \
+    "marked skip-worktree or assume-unchanged"
+
+  dir="$WORK/assume-unchanged"
+  (
+    monorepo_fixture "$dir"
+    git update-index --assume-unchanged packages/b/CHANGELOG.md
+    changelog packages/b/CHANGELOG.md 2.0.0 '- Not in HEAD' 1.0.0 '- Initial release'
+  )
+  expect_uncommitted_failure "file marked assume-unchanged fails" "$dir" \
+    "marked skip-worktree or assume-unchanged"
+
   dir="$WORK/symlinked-manifest"
   (
     monorepo_fixture "$dir"
