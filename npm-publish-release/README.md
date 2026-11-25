@@ -17,8 +17,9 @@ Run it after checking out the commit the workflow runs on (`github.sha`), in a j
 `github.sha`) and the tags go on `HEAD`, so the action fails before creating anything if they
 differ.
 
-The action needs only bash, git, jq, `gh` and openssl, which GitHub-hosted runners provide; it
-does not need Node.js or an install. Nothing from the repository may run earlier in the job: no
+The action needs only bash 4.2 or later, git, jq, `gh` and openssl, which GitHub-hosted runners
+provide; it does not need Node.js or an install. On a self-hosted macOS runner, `/bin/bash` is
+3.2: put a newer bash first on `PATH`, or the action fails at its first step. Nothing from the repository may run earlier in the job: no
 install, build or repository script. Such code could change what later steps run, through
 `$GITHUB_ENV` or `$GITHUB_PATH`, or change the files this action reads, while the job holds a
 token with `contents: write`. Build and publish in other jobs.

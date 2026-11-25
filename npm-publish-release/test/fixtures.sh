@@ -270,6 +270,21 @@ expect_prepare_failure() {
 
 install_shims "$WORK/shims"
 
+# --- bash_version_supported --------------------------------------------------
+
+test_bash_version() {
+  local ok=true
+  bash_version_supported 3 2 && ok=false
+  bash_version_supported 4 1 && ok=false
+  bash_version_supported 4 2 || ok=false
+  bash_version_supported 5 0 || ok=false
+  if [[ "$ok" == true ]]; then
+    pass "bash_version_supported: 4.2 or later"
+  else
+    fail "bash_version_supported: 4.2 or later"
+  fi
+}
+
 # --- changelog_section -------------------------------------------------------
 
 test_changelog_section() {
@@ -973,6 +988,7 @@ test_polyrepo() {
   expect_prepare_failure "polyrepo: missing section fails" "CHANGELOG.md has no section for 1.2.0"
 }
 
+test_bash_version
 test_changelog_section
 test_list_workspaces
 test_monorepo

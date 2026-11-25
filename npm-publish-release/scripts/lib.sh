@@ -4,6 +4,21 @@
 # Functions shared by the npm-publish-release scripts and their tests. None of
 # them runs Yarn, npm or Node.js: the job holds a token with contents: write.
 
+# bash_version_supported <major> <minor>
+#
+# Succeeds for bash 4.2 or later. The scripts use `declare -g` (4.2) and
+# associative arrays (4.0).
+bash_version_supported() {
+  (($1 > 4 || ($1 == 4 && $2 >= 2)))
+}
+
+# Checked before anything else, so that an older bash (such as macOS's
+# /bin/bash 3.2) fails with this message rather than partway through.
+if ! bash_version_supported "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"; then
+  echo "::error::npm-publish-release needs bash 4.2 or later; this is bash $BASH_VERSION. On macOS, install a newer bash and put it first on PATH." >&2
+  exit 1
+fi
+
 # A SemVer 2.0.0 version, as an ERE.
 readonly SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
 
