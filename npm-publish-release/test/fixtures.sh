@@ -223,14 +223,15 @@ env_value() {
 
 # workflow_commands <log>: prints the lines of <log> that the runner would
 # run as workflow commands. The runner splits output at CR as well as LF,
-# ignores leading whitespace, and runs nothing between ::stop-commands::<token>
-# and ::<token>::.
+# ignores leading whitespace, reads "::<command>::" at the start of a line and
+# the older "##[<command>]" anywhere in it, and runs nothing between
+# ::stop-commands::<token> and ::<token>::.
 workflow_commands() {
   tr '\r' '\n' <<<"$1" | awk '
     { sub(/^[[:space:]]+/, "") }
     stop != "" { if ($0 == "::" stop "::") stop = ""; next }
     /^::stop-commands::/ { stop = substr($0, 18); next }
-    /^(::|##\[)/ { print }
+    /^::/ || index($0, "##[") { print }
   '
 }
 
@@ -526,6 +527,25 @@ test_workflow_commands() {
     pass "workflow commands: none from release notes or the repository URL"
   else
     fail "workflow commands: none from release notes or the repository URL" "status $PREPARE_STATUS" "commands: $commands" "$PREPARE_LOG"
+  fi
+
+  # "##[" anywhere in a printed value: a repository URL that would stop
+  # commands with a token the changelog then resumes, and a workspace path.
+  dir="$WORK/commands-legacy"
+  (
+    monorepo_fixture "$dir"
+    jq '.repository.url = "https://github.com/octo/repo##[stop-commands]zz123456"' package.json >p && mv p package.json
+    changelog packages/a/CHANGELOG.md 1.1.0 $'- Entry\n::zz123456::\n::warning::after the resume' 1.0.0 '- Initial release'
+    pkg 'packages/##[add-mask]x' @octo/x 1.0.0
+    changelog 'packages/##[add-mask]x/CHANGELOG.md' 1.0.0 '- Initial release'
+    commit_changes
+  )
+  run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS == 0)) && [[ -z "$commands" ]] && grep -qF 'Releasing @octo/x@1.0.0 (packages/' <<<"$PREPARE_LOG"; then
+    pass "workflow commands: none from ##[ in the repository URL or a workspace path"
+  else
+    fail "workflow commands: none from ##[ in the repository URL or a workspace path" "status $PREPARE_STATUS" "commands: $commands" "$PREPARE_LOG"
   fi
 
   dir="$WORK/commands-error"

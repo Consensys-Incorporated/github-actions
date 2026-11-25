@@ -43,7 +43,7 @@ if [[ "$repository_url" != https://* && "$repository_url" != git+https://* ]]; t
 fi
 repository_url="${repository_url#git+}"
 repository_url="${repository_url%.git}"
-echo "Repository: $(escape_data "$repository_url")"
+echo "Repository: $(escape_log "$repository_url")"
 
 echo "release-version=$release_version" >>"$GITHUB_OUTPUT"
 
@@ -137,7 +137,7 @@ else
     if tag_exists "$name@$version"; then
       echo "Skipping $name@$version: already released."
     else
-      echo "Releasing $name@$version ($location)."
+      echo "Releasing $name@$version ($(escape_log "$location"))."
       printf '%s\t%s\t%s\n' "$name" "$location" "$version" >>"$packages_file"
     fi
   done <<<"$workspaces"

@@ -133,7 +133,9 @@ heading or the first link reference definition, with blank lines trimmed at both
 - Repository text cannot start a workflow command in the log. The release notes are printed
   between `::stop-commands::<random token>` and `::<random token>::`. Names and versions are
   validated before they are printed; other values from the repository are printed with `%`, CR
-  and LF percent-encoded, so they stay on one line. Workspace paths with control characters fail.
+  and LF percent-encoded, so they stay on one line, and in plain log lines also with `#`, `[` and
+  `]` percent-encoded, since the runner reads the older `##[<command>]` form anywhere in a line.
+  Workspace paths with control characters fail.
 - `RELEASE_NOTES` is exported with a random delimiter, so changelog text cannot end the value
   early or set other variables.
 

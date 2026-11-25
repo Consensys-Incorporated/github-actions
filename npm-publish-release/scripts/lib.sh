@@ -25,6 +25,21 @@ escape_data() {
   printf '%s' "$value"
 }
 
+# escape_log <value>
+#
+# Prints <value> as escape_data does, with #, [ and ] percent-encoded too, for
+# repository text in a plain log line. The runner reads the older
+# "##[<command>]" form anywhere in a line, not only "::<command>::" at its
+# start, so escape_data alone does not keep such a line from running one.
+escape_log() {
+  local value
+  value="$(escape_data "$1")"
+  value="${value//'#'/%23}"
+  value="${value//'['/%5B}"
+  value="${value//']'/%5D}"
+  printf '%s' "$value"
+}
+
 # require_committed <path>...
 #
 # Fails unless each <path>, relative to the repository root (the current
