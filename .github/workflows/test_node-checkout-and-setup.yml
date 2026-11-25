@@ -209,6 +209,36 @@ jobs:
           grep -qx "yarn-lock-available=false" "$GITHUB_OUTPUT"
           grep -qx "package-json-path=" "$GITHUB_OUTPUT"
 
+      # The action's checkout steps use this output, so any .git counts:
+      # a repository, an empty directory, or a file (as in a worktree).
+      - name: download-metadata.sh outputs whether the workspace is checked out
+        env:
+          OWNER_AND_REPO: ${{ github.repository }}
+        run: |
+          check() {
+            local expected="$1" dir
+            dir="$(mktemp -d)"
+            (
+              cd "$dir"
+              shift
+              "$@"
+              export GITHUB_OUTPUT="$dir.out"
+              # An unreachable source makes any download attempt fail.
+              IS_HIGH_RISK_ENVIRONMENT=true CACHE_NODE_MODULES=false SKIP_INSTALL=false INPUT_NODE_VERSION=24.x \
+                COMMIT_HASH=does-not-exist REPO_VISIBILITY=public METADATA_DIR="$dir.meta" \
+                "$GITHUB_WORKSPACE/node-checkout-and-setup/scripts/download-metadata.sh"
+              if ! grep -qx "checked-out=$expected" "$GITHUB_OUTPUT"; then
+                echo "::error::Expected checked-out=$expected after: ${*:-nothing}"
+                cat "$GITHUB_OUTPUT"
+                exit 1
+              fi
+            )
+          }
+          check false true
+          check true git init -q
+          check true mkdir .git
+          check true eval 'echo "gitdir: /nonexistent" > .git'
+
       # Annotations can't be read from inside the job, so the pre-checked-out
       # job below can't check its warning; this checks the script's output.
       - name: warn-ignored-checkout-inputs.sh warns about ref and persist-credentials
@@ -709,6 +739,32 @@ jobs:
           [[ -z "$NODE_VERSION" && "$CACHE_HIT" == "false" ]]
           test ! -e "$FILE"
           test ! -e node_modules
+
+  # An empty .git directory counts as a checkout, as in download-metadata.sh:
+  # nothing is downloaded or checked out. hashFiles('.git') would be '' here.
+  empty-git-dir:
+    name: Workspace with an empty .git directory is not checked out
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - name: Create an empty .git directory
+        run: mkdir .git
+      - name: Run action
+        uses: ./actions-repo/node-checkout-and-setup
+        with:
+          is-high-risk-environment: true
+          node-version: 24.x
+          skip-install: true
+          # A ref with the fixture at its root, which a checkout would bring.
+          ref: ${{ env.FIXTURE_BRANCH }}
+      - name: Assert nothing was checked out or downloaded
+        run: |
+          [[ -z "$(ls -A .git)" ]]
+          test ! -e package.json
+          test ! -e yarn.lock
 
   pre-checked-out:
     name: Pre-checked-out workspace is not checked out again

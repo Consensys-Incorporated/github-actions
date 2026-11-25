@@ -137,7 +137,9 @@ Ubuntu runners include.
 
 The scripts job runs `scripts/download-metadata.sh` against the fixture branch, for a public and a
 private source. In a `git init`ed directory it must download nothing, and fail without `.nvmrc`
-unless `node-version` is given.
+unless `node-version` is given. Its `checked-out` output must be `true` with any `.git` (a
+repository, an empty directory or a file) and `false` without one; the `empty-git-dir` job checks
+that the action then neither checks out nor downloads.
 
 Annotations can't be read from inside a job, so the warning about `ref` and `persist-credentials`
 in a checked-out workspace is tested by running `scripts/warn-ignored-checkout-inputs.sh` in the
