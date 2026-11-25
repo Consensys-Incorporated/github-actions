@@ -3,5 +3,6 @@
 .github/workflows/  @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
 
 # ocap-kernel's Node.js and npm actions
+.github/workflows/test_*.yml  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
+check-skip-merge-queue/  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
 node-checkout-and-setup/  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
-.github/workflows/test_node-checkout-and-setup.yml  @Consensys-Incorporated/ocap-kernel-admins @Consensys-Incorporated/protocols-dso @Consensys-Incorporated/documentation-admins
