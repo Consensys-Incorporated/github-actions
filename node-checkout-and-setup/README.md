@@ -30,6 +30,9 @@ and replaces
   which matches other entries by prefix; without a `package.json`, Corepack runs its default Yarn.
 - When the workspace is already a git repository, the action does not check out, and warns if
   `ref` or `persist-credentials: true` is given. Upstream ignored them silently.
+- Whether the workspace is already a git repository is decided once, by `-e .git` in
+  `scripts/download-metadata.sh`, rather than by `hashFiles('.git')`, which hashes the whole
+  `.git` directory and treats an empty one as absent.
 
 ## Usage
 

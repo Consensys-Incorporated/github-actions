@@ -13,7 +13,8 @@
 #   OWNER_AND_REPO, COMMIT_HASH, REPO_VISIBILITY, GH_TOKEN
 #   METADATA_DIR: where to put .nvmrc and package.json
 #
-# Outputs (to $GITHUB_OUTPUT): nvmrc-path, yarn-lock-available, package-json-path
+# Outputs (to $GITHUB_OUTPUT): checked-out, nvmrc-path, yarn-lock-available,
+#   package-json-path
 
 set -euo pipefail
 
@@ -45,10 +46,13 @@ write_output() {
   echo "$1=$2" >>"$GITHUB_OUTPUT"
 }
 
+# The action's checkout steps use this output too, so that they and this
+# script agree on whether the workspace is checked out.
 checked_out="false"
 if [[ -e .git ]]; then
   checked_out="true"
 fi
+write_output "checked-out" "$checked_out"
 
 low_risk_cache_lookup="false"
 if [[ "$IS_HIGH_RISK_ENVIRONMENT" == "false" && "$CACHE_NODE_MODULES" == "true" && "$SKIP_INSTALL" != "true" ]]; then

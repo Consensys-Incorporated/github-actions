@@ -143,10 +143,12 @@ runs:
         key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
         lookup-only: true
 
-    # Runs before the checkout below, which would create .git. A workspace that
-    # is already a git repository is not checked out again.
+    # A workspace that is already a git repository (has .git) is not checked
+    # out again. download-metadata.sh decides this; no step between it and the
+    # checkout creates .git. Not hashFiles('.git'), which hashes every file
+    # under .git and returns '' for an empty .git directory.
     - name: Warn about checkout inputs that have no effect
-      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && hashFiles('.git') != '' }}
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.download-metadata.outputs.checked-out == 'true' }}
       shell: bash
       env:
         INPUT_REF: ${{ inputs.ref }}
@@ -155,7 +157,7 @@ runs:
       run: '"$ACTION_PATH/scripts/warn-ignored-checkout-inputs.sh"'
 
     - name: Check out repository
-      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && hashFiles('.git') == '' }}
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.download-metadata.outputs.checked-out != 'true' }}
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
         fetch-depth: 1
