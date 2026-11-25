@@ -356,16 +356,16 @@ STATUS=$?
 set -e
 pkdiff_installed() {
   ((STATUS == 0)) &&
-    [[ "$(cat "$WORK/shim.log")" == 'npm ci --ignore-scripts --no-audit --no-fund --registry https://registry.npmjs.org [files=package-lock.json package.json ]' ]] &&
+    [[ "$(cat "$WORK/shim.log")" == 'npm ci --ignore-scripts --no-audit --no-fund --install-strategy=shallow --registry https://registry.npmjs.org [files=package-lock.json package.json ]' ]] &&
     test -x "$PKDIFF_DIR/node_modules/.bin/pkdiff"
 }
-check "install-pkdiff.sh runs npm ci with --ignore-scripts and --registry in a new directory" pkdiff_installed
+check "install-pkdiff.sh runs npm ci with --ignore-scripts, --install-strategy=shallow and --registry in a new directory" pkdiff_installed
 
 # pkdiff's lockfile pins every package to a registry.npmjs.org tarball. It
 # nests pkdiff's dependencies under node_modules/pkdiff, as a global install
 # does (npm install --install-strategy=shallow): pkdiff reads diff2html's files
-# from its own node_modules, and `npm ci` lays packages out as the lockfile
-# does.
+# from its own node_modules, and install-pkdiff.sh runs `npm ci` with
+# --install-strategy=shallow, which keeps the lockfile's layout.
 LOG="$(cat "$ACTION_DIR/pkdiff/package-lock.json")"
 lockfile_pinned() {
   jq --exit-status '

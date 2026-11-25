@@ -3,9 +3,11 @@
 #
 # Installs pkdiff into $PKDIFF_DIR with `npm ci`, so that pkdiff and each of
 # its dependencies are the version, with the integrity hash, in the action's
-# pkdiff/package-lock.json. `npm ci` lays the packages out as the lockfile
-# does; pkdiff reads diff2html's files from its own node_modules, so the
-# lockfile must nest them there. To update it, run `npm install
+# pkdiff/package-lock.json. pkdiff reads diff2html's files from its own
+# node_modules, so the lockfile nests them there, and `npm ci` is given
+# --install-strategy=shallow so that it keeps that layout: with another
+# strategy, such as npm_config_install_strategy=linked from the caller's job,
+# it would install them elsewhere. To update the lockfile, run `npm install
 # --ignore-scripts` in pkdiff/, whose .npmrc sets install-strategy=shallow.
 #
 # Environment: ACTION_PATH (the action's directory), PKDIFF_DIR.
@@ -31,5 +33,6 @@ cd "$PKDIFF_DIR"
 # https://registry.npmjs.org URLs from the configured registry, so --registry
 # overrides npm_config_registry from the caller's job. (pkdiff's dependencies
 # are unscoped, so no scope's registry applies.) The lockfile's integrity
-# hashes are checked either way.
-npm ci --ignore-scripts --no-audit --no-fund --registry https://registry.npmjs.org
+# hashes are checked either way. --install-strategy=shallow overrides
+# npm_config_install_strategy (see above).
+npm ci --ignore-scripts --no-audit --no-fund --install-strategy=shallow --registry https://registry.npmjs.org

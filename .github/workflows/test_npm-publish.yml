@@ -105,6 +105,11 @@ jobs:
         run: |
           corepack enable
           actions-repo/npm-publish/test/make-fixture.sh existing "$GITHUB_WORKSPACE"
+      # With the linked strategy, `npm ci` would install pkdiff's
+      # dependencies under node_modules/.store, where pkdiff doesn't find
+      # diff2html; install-pkdiff.sh overrides it.
+      - name: Set npm_config_install_strategy in $GITHUB_ENV
+        run: echo "npm_config_install_strategy=linked" >>"$GITHUB_ENV"
       - name: Run action
         id: action
         uses: ./actions-repo/npm-publish
