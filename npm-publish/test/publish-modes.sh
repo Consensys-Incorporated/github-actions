@@ -63,7 +63,7 @@ fi
 if [[ "$1" == "ci" ]]; then
   printf 'npm' >>"$SHIM_LOG"
   printf ' %q' "$@" >>"$SHIM_LOG"
-  printf ' [files=%s]\n' "$(ls -A | tr '\n' ' ')" >>"$SHIM_LOG"
+  printf ' [files=%s]\n' "$(LC_ALL=C ls -A | tr '\n' ' ')" >>"$SHIM_LOG"
   mkdir -p node_modules/.bin
   if [[ -z "${SHIM_NO_DIFF2HTML:-}" ]]; then
     mkdir -p node_modules/pkdiff/node_modules/diff2html
