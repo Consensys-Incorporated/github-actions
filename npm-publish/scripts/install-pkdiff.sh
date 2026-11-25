@@ -36,3 +36,11 @@ cd "$PKDIFF_DIR"
 # hashes are checked either way. --install-strategy=shallow overrides
 # npm_config_install_strategy (see above).
 npm ci --ignore-scripts --no-audit --no-fund --install-strategy=shallow --registry https://registry.npmjs.org
+
+# report.sh ignores pkdiff's failures, so check here that the install put
+# diff2html where pkdiff reads it: not so after an install with another
+# layout, or one that did nothing (npm_config_dry_run=true).
+if [[ ! -d node_modules/pkdiff/node_modules/diff2html ]]; then
+  echo "::error::npm ci did not install pkdiff's diff2html in $PKDIFF_DIR/node_modules/pkdiff/node_modules."
+  exit 1
+fi

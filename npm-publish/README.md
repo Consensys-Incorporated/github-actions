@@ -99,9 +99,10 @@ fails the action before anything else runs.
    workspace location with a control character.
 4. **Dry run**: tarballs are written to `$RUNNER_TEMP/npm-publish-packages`. Log each tarball's
    SHA-1 and integrity to the step summary, install `pkdiff` from `pkdiff/package-lock.json` with
-   `npm ci` into `$RUNNER_TEMP/npm-publish-pkdiff`, write a `pkdiff` report against
-   `<name>@latest`, and upload the tarballs and reports as the
-   `npm-publish-dry-run-<sha>` artifact.
+   `npm ci` into `$RUNNER_TEMP/npm-publish-pkdiff` (failing if `diff2html` isn't then nested under
+   `pkdiff`), write a `pkdiff` report against `<name>@latest` (`pkdiff`'s failures are ignored, as
+   for a package not yet on npm, but a missing `pkdiff` fails), and upload the tarballs and
+   reports as the `npm-publish-dry-run-<sha>` artifact.
 
 The Sanitize step's changes outlast the job on a runner that is reused (self-hosted): it doesn't
 restore `~/.yarnrc.yml`, remove the generated `.yarnrc-<random>.yml` from the checkout's parent
@@ -192,13 +193,14 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 `test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims (the `npm` shim fails
 unless `npm view` is pinned to `https://registry.npmjs.org`), that `install-pkdiff.sh` runs
 `npm ci --ignore-scripts --install-strategy=shallow --registry https://registry.npmjs.org` in a
-new directory, that `pkdiff/package-lock.json` is lockfile version 3, nests `pkdiff`'s
-dependencies under it (`pkdiff` reads `diff2html`'s files from its own `node_modules`) and
-resolves every package to `https://registry.npmjs.org/`, that `report.sh` runs the installed
-`pkdiff` and passes it `--registry https://registry.npmjs.org`, that an invalid `dry-run` fails,
-that invalid names and versions fail without being read as workflow commands, that Yarn's output is
-wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that a monorepo's
-workspaces are handled in Yarn's order and stop at the first failure.
+new directory and fails if `diff2html` isn't nested under `pkdiff` afterwards, that
+`pkdiff/package-lock.json` is lockfile version 3, nests `pkdiff`'s dependencies under it (`pkdiff`
+reads `diff2html`'s files from its own `node_modules`) and resolves every package to
+`https://registry.npmjs.org/`, that `report.sh` runs the installed `pkdiff`, passes it
+`--registry https://registry.npmjs.org` and fails if it isn't installed, that an invalid `dry-run`
+fails, that invalid names and versions fail without being read as workflow commands, that Yarn's
+output is wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that
+a monorepo's workspaces are handled in Yarn's order and stop at the first failure.
 `test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
 except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
 the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with

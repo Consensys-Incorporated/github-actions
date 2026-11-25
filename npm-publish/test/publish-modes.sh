@@ -58,12 +58,16 @@ if [[ "$1" == "view" ]]; then
   exit 1
 fi
 # npm ci: logs its arguments and the files in its directory, and installs a
-# pkdiff that logs its arguments.
+# pkdiff that logs its arguments, and pkdiff's diff2html unless
+# $SHIM_NO_DIFF2HTML is set.
 if [[ "$1" == "ci" ]]; then
   printf 'npm' >>"$SHIM_LOG"
   printf ' %q' "$@" >>"$SHIM_LOG"
   printf ' [files=%s]\n' "$(ls -A | tr '\n' ' ')" >>"$SHIM_LOG"
   mkdir -p node_modules/.bin
+  if [[ -z "${SHIM_NO_DIFF2HTML:-}" ]]; then
+    mkdir -p node_modules/pkdiff/node_modules/diff2html
+  fi
   cat >node_modules/.bin/pkdiff <<'PKDIFF'
 #!/usr/bin/env bash
 printf 'pkdiff' >>"$SHIM_LOG"
@@ -346,14 +350,24 @@ rm -f "$TARBALL" "$PACK_DIR"/*.tgz
 # install-pkdiff.sh installs from the lockfile, without install scripts, from
 # the npm registry, into a new directory: a file left there doesn't survive.
 PKDIFF_DIR="$WORK/pkdiff"
+run_install() {
+  : >"$WORK/shim.log"
+  set +e
+  LOG="$(env PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" ACTION_PATH="$ACTION_DIR" PKDIFF_DIR="$PKDIFF_DIR" \
+    "$@" "$SCRIPTS/install-pkdiff.sh" 2>&1)"
+  STATUS=$?
+  set -e
+}
+
+# Without diff2html under node_modules/pkdiff, as after an install with
+# another layout or one that did nothing, install-pkdiff.sh fails.
+run_install SHIM_NO_DIFF2HTML=1
+check "install-pkdiff.sh fails if diff2html isn't nested under pkdiff" \
+  bash -c "(($STATUS != 0)) && grep -q \"^::error::npm ci did not install pkdiff's diff2html\" <<<\"\$1\"" _ "$LOG"
+
 mkdir -p "$PKDIFF_DIR"
 echo "registry=https://example.invalid/" >"$PKDIFF_DIR/.npmrc"
-: >"$WORK/shim.log"
-set +e
-LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" ACTION_PATH="$ACTION_DIR" PKDIFF_DIR="$PKDIFF_DIR" \
-  "$SCRIPTS/install-pkdiff.sh" 2>&1)"
-STATUS=$?
-set -e
+run_install
 pkdiff_installed() {
   ((STATUS == 0)) &&
     [[ "$(cat "$WORK/shim.log")" == 'npm ci --ignore-scripts --no-audit --no-fund --install-strategy=shallow --registry https://registry.npmjs.org [files=package-lock.json package.json ]' ]] &&
@@ -388,12 +402,22 @@ chmod +x "$SHIMS/pkdiff"
 mkdir -p "$WORK/report/package"
 echo '{"name": "@test/npm-publish-modes", "version": "1.2.3"}' >"$WORK/report/package/package.json"
 tar -czf "$TARBALL" -C "$WORK/report" package
-: >"$WORK/shim.log"
-set +e
-LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" PKDIFF_DIR="$PKDIFF_DIR" \
-  "$SCRIPTS/report.sh" 2>&1)"
-STATUS=$?
-set -e
+run_report() {
+  : >"$WORK/shim.log"
+  set +e
+  LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" PKDIFF_DIR="$1" \
+    "$SCRIPTS/report.sh" 2>&1)"
+  STATUS=$?
+  set -e
+}
+
+# Without an installed pkdiff, report.sh fails rather than ignoring it.
+mkdir -p "$WORK/no-pkdiff"
+run_report "$WORK/no-pkdiff"
+check "report.sh fails if pkdiff isn't installed" \
+  bash -c "(($STATUS != 0)) && grep -q '^::error::.*/node_modules/.bin/pkdiff is not executable' <<<\"\$1\" && [[ ! -s '$WORK/shim.log' ]]" _ "$LOG"
+
+run_report "$PKDIFF_DIR"
 pkdiff_pinned() {
   ((STATUS == 0)) && [[ "$(wc -l <"$WORK/shim.log")" -eq 1 ]] &&
     grep -q '^pkdiff .* --registry https://registry\.npmjs\.org .*-- ' "$WORK/shim.log"
