@@ -147,7 +147,11 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
   `--@<scope>:registry=https://registry.npmjs.org` (which `--registry` doesn't override), so that
   `npm_config_*` variables set by the caller's job or through `$GITHUB_ENV`, such as
   `npm_config_registry`, or an `.npmrc`, can't redirect the lookup that chooses between the token
-  and OIDC.
+  and OIDC. `npm view` also runs with nothing from the environment but `PATH`, and with empty user
+  and global configuration files, so that a proxy (`HTTPS_PROXY`, `https_proxy`,
+  `npm_config_https_proxy`, ...) set by the caller's job or through `$GITHUB_ENV` can't answer
+  "not found" for the registry and send an existing package down the token path. A runner that can
+  reach the registry only through a proxy therefore fails the lookup, and with it the action.
 - A single-package repository publishes only if its root isn't private and its version isn't on
   npm yet, so re-running a release doesn't fail on an existing version.
 - Lifecycle scripts are removed from private workspaces too.
@@ -208,12 +212,13 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 ## Tests
 
 `test/publish-modes.sh` tests mode selection with `yarn`, `corepack` and `npm` shims (the `yarn`
-shim packs and publishes only through `corepack yarn@<the root's version>`, and the `npm` shim
-fails unless `npm view` is pinned to `https://registry.npmjs.org`), that `install-pkdiff.sh` runs
-`npm ci --ignore-scripts --install-strategy=shallow --registry https://registry.npmjs.org` in a new
-directory and fails if `diff2html` isn't nested under `pkdiff` afterwards, that
-`pkdiff/package-lock.json` is lockfile version 3, nests `pkdiff`'s dependencies under it (`pkdiff`
-reads `diff2html`'s files from its own `node_modules`), resolves every package to
+shim packs and publishes only through `corepack yarn@<the root's version>`, and the `npm` shim fails
+unless `npm view` is pinned to `https://registry.npmjs.org`, with empty user and global
+configuration files and no proxy or `npm_config_*` variable in its environment), that
+`install-pkdiff.sh` runs `npm ci --ignore-scripts --install-strategy=shallow --registry
+https://registry.npmjs.org` in a new directory and fails if `diff2html` isn't nested under `pkdiff`
+afterwards, that `pkdiff/package-lock.json` is lockfile version 3, nests `pkdiff`'s dependencies
+under it (`pkdiff` reads `diff2html`'s files from its own `node_modules`), resolves every package to
 `https://registry.npmjs.org/` and has `pkdiff`'s `minimist` at 0.2.4, that `report.sh` runs the
 installed `pkdiff`, passes it `--registry https://registry.npmjs.org` and fails if it isn't
 installed, that an invalid `dry-run` fails, that invalid names and versions fail without being read

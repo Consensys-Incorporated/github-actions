@@ -19,18 +19,39 @@ failures=0
 mkdir -p "$SHIMS"
 
 # npm: `npm view [options] -- <spec> version` prints a version iff <spec> is a
-# line of $NPM_PUBLISHED, fails with E500 if the file has a "!error" line, and
+# line of $WORK/published (found next to the shim: npm view runs with an empty
+# environment), fails with E500 if the file has a "!error" line, and
 # with E404 otherwise. Fails if <spec> doesn't follow `--`, or if the options
 # don't include `--registry https://registry.npmjs.org` and, for a scoped
 # <spec>, `--@<scope>:registry=https://registry.npmjs.org`: npm_config_*
-# variables from the caller's job could otherwise redirect the lookup.
+# variables from the caller's job could otherwise redirect the lookup. Fails,
+# too, if a proxy or npm_config_* variable (in any case) reaches it, or if
+# `--userconfig` and `--globalconfig` aren't empty files: a proxy could answer
+# 404 for the registry.
 cat >"$SHIMS/npm" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "view" ]]; then
+  published="$(dirname "$0")/../published"
+  if env | grep -qiE '^(https?_proxy|all_proxy|npm_config_)'; then
+    echo "npm shim: proxy or npm_config_* variable in npm view's environment" >&2
+    exit 1
+  fi
   options=()
   while (($# > 0)) && [[ "$1" != "--" ]]; do
     options+=("$1")
     shift
+  done
+  for config in --userconfig --globalconfig; do
+    file=""
+    for ((i = 0; i < ${#options[@]} - 1; i++)); do
+      if [[ "${options[i]}" == "$config" ]]; then
+        file="${options[i + 1]}"
+      fi
+    done
+    if [[ -z "$file" || ! -f "$file" || -s "$file" ]]; then
+      echo "npm shim: $config is not an empty file" >&2
+      exit 1
+    fi
   done
   if (($# < 2)); then
     echo "npm shim: no -- before the spec" >&2
@@ -44,11 +65,11 @@ if [[ "$1" == "view" ]]; then
     echo "npm shim: no --${2%%/*}:registry=https://registry.npmjs.org" >&2
     exit 1
   fi
-  if grep -qxF -- "$2" "$NPM_PUBLISHED"; then
+  if grep -qxF -- "$2" "$published"; then
     echo '"1.0.0"'
     exit 0
   fi
-  if grep -qxF -- '!error' "$NPM_PUBLISHED"; then
+  if grep -qxF -- '!error' "$published"; then
     echo '{"error": {"code": "E500", "summary": "Internal Server Error"}}'
     echo "npm error code E500" >&2
     exit 1
@@ -149,7 +170,7 @@ run_publish() {
   rm -f "$TARBALL"
   set +e
   LOG="$(cd "$PKG" && env -u ACTIONS_ID_TOKEN_REQUEST_URL -u YARN_NPM_AUTH_TOKEN \
-    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" \
+    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" \
     PACK_DIR="$PACK_DIR" GITHUB_STEP_SUMMARY="$WORK/summary" \
     PUBLISH_NPM_TAG=next DRY_RUN= REPOSITORY_VISIBILITY=public ROOT_YARN_VERSION=4.18.1 "$@" "$SCRIPTS/publish.sh" 2>&1)"
   STATUS=$?
@@ -218,6 +239,15 @@ check "npm lookup error other than 404: fails without publishing" failed_with "'
 run_publish yes DRY_RUN=false YARN_NPM_AUTH_TOKEN=token
 check "existing package without OIDC, dry-run false: fails" failed_with "OIDC is not available"
 
+# A proxy could answer 404 for the registry, which would send an existing
+# package down the token path; npm view runs without the caller's proxy and
+# npm_config_* variables.
+proxies=(HTTPS_PROXY=http://proxy.invalid https_proxy=http://proxy.invalid
+  npm_config_https_proxy=http://proxy.invalid NPM_CONFIG_PROXY=http://proxy.invalid)
+run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc YARN_NPM_AUTH_TOKEN=token "${proxies[@]}"
+check "existing package with proxy variables set: still found on npm, OIDC publish" \
+  published_with 'yarn npm publish --tag next --staged --provenance [token=]'
+
 for value in True yes 1; do
   run_publish yes ACTIONS_ID_TOKEN_REQUEST_URL=https://oidc DRY_RUN="$value"
   check "dry-run '$value' fails without publishing" failed_with "'dry-run' must be 'true', 'false' or empty"
@@ -267,7 +297,7 @@ run_main() {
   : >"$WORK/output"
   set +e
   LOG="$(cd "${MAIN_DIR:-$PKG}" && env -u ACTIONS_ID_TOKEN_REQUEST_URL \
-    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" NPM_PUBLISHED="$WORK/published" PACK_DIR="$PACK_DIR" \
+    PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" \
     GITHUB_OUTPUT="$WORK/output" GITHUB_STEP_SUMMARY="$WORK/summary" \
     PUBLISH_NPM_TAG=next DRY_RUN=true YARN_RC_FILENAME=.yarnrc-test.yml "$@" "$SCRIPTS/main.sh" 2>&1)"
   STATUS=$?
@@ -300,6 +330,9 @@ echo "@test/npm-publish-modes@1.2.3" >"$WORK/published"
 run_main
 check "polyrepo whose version is already on npm: nothing published, dry-run=false" \
   bash -c "(($STATUS == 0)) && grep -q 'No packages need publishing' <<<\"\$1\" && [[ ! -s '$WORK/shim.log' ]] && grep -qx 'dry-run=false' '$WORK/output'" _ "$LOG"
+run_main "${proxies[@]}"
+check "polyrepo whose version is already on npm, with proxy variables set: nothing published" \
+  bash -c "(($STATUS == 0)) && grep -q 'No packages need publishing' <<<\"\$1\" && [[ ! -s '$WORK/shim.log' ]]" _ "$LOG"
 : >"$WORK/published"
 
 echo '{"name": "@test/npm-publish-modes", "version": "1.2.3", "private": true}' >"$PKG/package.json"
