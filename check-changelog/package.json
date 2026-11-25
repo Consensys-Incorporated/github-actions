@@ -2,20 +2,20 @@
   "name": "check-changelog",
   "version": "0.0.0",
   "private": true,
-  "description": "Runtime dependencies of the check-changelog action.",
+  "description": "The check-changelog action's check script, bundled into dist/.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.ts",
     "test": "node --test 'test/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
-    "semver": "^7.7.2"
-  },
   "devDependencies": {
+    "@metamask/auto-changelog": "^7.0.1",
     "@types/node": "^24.0.0",
     "@types/semver": "^7.7.0",
+    "esbuild": "0.28.2",
+    "semver": "^7.7.2",
     "typescript": "^7.0.2"
   },
   "engines": {
