@@ -569,6 +569,22 @@ test_config_errors() {
       "$name@1.1.0 is not a valid Git tag name"
   done
 
+  # Linux does not start a process with an environment value over 128 KiB, so
+  # RELEASE_NOTES that large would break every later step.
+  dir="$WORK/large-notes"
+  (
+    monorepo_fixture "$dir"
+    changelog packages/a/CHANGELOG.md 1.1.0 "$(awk 'BEGIN { for (i = 0; i < 3000; i++) printf "- Entry %04d with some text to make the line longer\n", i }')" 1.0.0 '- Initial release'
+    commit_changes
+  )
+  run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "release notes over 128 KiB fail" "are exported as RELEASE_NOTES"
+  if [[ -s "$dir.out/github_env" ]]; then
+    fail "release notes over 128 KiB: nothing exported"
+  else
+    pass "release notes over 128 KiB: nothing exported"
+  fi
+
   dir="$WORK/empty-section"
   (monorepo_fixture "$dir" && printf '## [Unreleased]\n\n## [2.0.0]\n\n## [1.0.0]\n\n- Initial release\n' >packages/b/CHANGELOG.md && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"

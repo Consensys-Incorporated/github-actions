@@ -232,6 +232,18 @@ if [[ -z "$(tr -d '[:space:]' <"$notes_file")" ]]; then
   exit 1
 fi
 
+# RELEASE_NOTES reaches the environment of every later step, and Linux does
+# not start a process with an environment string over 131072 bytes, counting
+# "RELEASE_NOTES=" and a NUL. The value is the file without its last newline.
+notes_bytes="$(wc -c <"$notes_file" | tr -d ' ')"
+if [[ -z "$(tail -c 1 "$notes_file")" ]]; then
+  notes_bytes=$((notes_bytes - 1))
+fi
+if ((notes_bytes > 131072 - 15)); then
+  echo "::error::The release notes are $notes_bytes bytes. They are exported as RELEASE_NOTES, and Linux does not start a process with an environment value over 128 KiB, so every later step of the job would fail."
+  exit 1
+fi
+
 # The notes are free text from the changelogs: print them with workflow
 # commands stopped, so that a line in them cannot run one.
 stop_token="$(openssl rand -hex 16)"

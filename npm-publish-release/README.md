@@ -53,7 +53,8 @@ It uses `env.GITHUB_TOKEN` if set, otherwise `github.token`.
 | `release-version` | The root `package.json` `version`.   |
 
 The release notes are also exported to later steps of the job as the `RELEASE_NOTES` environment
-variable.
+variable. Linux does not start a process with an environment value over 128 KiB, so the action
+fails before creating anything if the notes are larger (131,057 bytes at most).
 
 ## Behavior
 
@@ -115,6 +116,8 @@ heading or the first link reference definition, with blank lines trimmed at both
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
 - The notes are passed with `--notes-file` instead of as an argument.
+- Notes over 128 KiB fail before anything is created. Upstream exported them, and every later
+  step failed to start.
 - The action fails before creating anything if `HEAD` is not the release commit. Upstream created
   the release at `github.sha` and tagged `HEAD` regardless. The release commit is the new
   `release-commit` input, which defaults to `github.sha`.
