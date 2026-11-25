@@ -86,6 +86,36 @@ jobs:
             exit 1
           fi
 
+  # pkdiff, installed from its lockfile, writes a report for a package that is
+  # on npm (report.sh ignores pkdiff's failures, so only the file shows that
+  # it ran).
+  report:
+    name: Dry run writes a pkdiff report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: actions-repo
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Build fixture
+        run: |
+          corepack enable
+          actions-repo/npm-publish/test/make-fixture.sh existing "$GITHUB_WORKSPACE"
+      - name: Run action
+        id: action
+        uses: ./actions-repo/npm-publish
+        with:
+          dry-run: true
+      - name: Assert the report was written
+        run: |
+          report="$RUNNER_TEMP/$PACK_DIR_NAME/left-pad-999.0.0.tgz.html"
+          test -s "$report"
+          grep -q 'left-pad' "$report"
+
   no-credentials-fails:
     name: dry-run false without credentials fails (${{ matrix.kind }})
     runs-on: ubuntu-latest
@@ -221,7 +251,8 @@ jobs:
           corepack enable
           actions-repo/npm-publish/test/make-fixture.sh canary "$GITHUB_WORKSPACE"
       # As an earlier step in a caller's job could. The dry run's npm lookups
-      # and pkdiff install fail if they use this registry.
+      # and pkdiff install fail if they use this registry (`npm ci` would
+      # download the lockfile's registry.npmjs.org URLs from it).
       - name: Set npm_config_registry in $GITHUB_ENV
         run: |
           {

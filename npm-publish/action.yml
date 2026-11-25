@@ -92,18 +92,20 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/main.sh"'
 
-    # Run from /tmp, so that no .npmrc in the repository applies. Without
-    # install scripts: pkdiff's dependencies are not pinned. --registry
-    # overrides npm_config_registry from the caller's job (pkdiff's
-    # dependencies are unscoped, so no scope's registry applies).
+    # `npm ci` from pkdiff/package-lock.json, without install scripts, in a
+    # new directory under $RUNNER_TEMP: outside the repository, so that no
+    # .npmrc in it applies, and outside the action's own directory, which may
+    # be shared between jobs or be inside the caller's checkout. --registry
+    # overrides npm_config_registry from the caller's job.
     - name: Install pkdiff
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
       shell: bash
-      working-directory: /tmp
       env:
         BASH_ENV: ''
         ENV: ''
-      run: npm i -g --ignore-scripts --registry https://registry.npmjs.org pkdiff@2.0.1
+        PKDIFF_DIR: ${{ runner.temp }}/npm-publish-pkdiff
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/install-pkdiff.sh"'
 
     - name: Generate package diff report
       if: ${{ steps.publish.outputs.dry-run == 'true' }}
@@ -113,6 +115,7 @@ runs:
         BASH_ENV: ''
         ENV: ''
         PACK_DIR: ${{ runner.temp }}/npm-publish-packages
+        PKDIFF_DIR: ${{ runner.temp }}/npm-publish-pkdiff
         ACTION_PATH: ${{ github.action_path }}
       run: '"$ACTION_PATH/scripts/report.sh"'
 

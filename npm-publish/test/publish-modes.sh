@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tests publish.sh's mode selection, main.sh's checks and report.sh's pkdiff
-# arguments with `yarn`, `npm` and `pkdiff` replaced by shims that record their
-# arguments.
+# Tests publish.sh's mode selection, main.sh's checks, install-pkdiff.sh's
+# `npm ci` and report.sh's pkdiff arguments with `yarn`, `npm` and `pkdiff`
+# replaced by shims that record their arguments; and that pkdiff's lockfile
+# downloads only from the npm registry.
 #
 # Usage: test/publish-modes.sh
 
@@ -55,6 +56,22 @@ if [[ "$1" == "view" ]]; then
   echo '{"error": {"code": "E404", "summary": "Not Found"}}'
   echo "npm error code E404" >&2
   exit 1
+fi
+# npm ci: logs its arguments and the files in its directory, and installs a
+# pkdiff that logs its arguments.
+if [[ "$1" == "ci" ]]; then
+  printf 'npm' >>"$SHIM_LOG"
+  printf ' %q' "$@" >>"$SHIM_LOG"
+  printf ' [files=%s]\n' "$(ls -A | tr '\n' ' ')" >>"$SHIM_LOG"
+  mkdir -p node_modules/.bin
+  cat >node_modules/.bin/pkdiff <<'PKDIFF'
+#!/usr/bin/env bash
+printf 'pkdiff' >>"$SHIM_LOG"
+printf ' %q' "$@" >>"$SHIM_LOG"
+echo >>"$SHIM_LOG"
+PKDIFF
+  chmod +x node_modules/.bin/pkdiff
+  exit 0
 fi
 echo "npm shim: unexpected command $*" >&2
 exit 1
@@ -326,12 +343,46 @@ echo '{"name": "@test/a", "version": "1.0.0"}' >"$MONO/packages/a/package.json"
 
 rm -f "$TARBALL" "$PACK_DIR"/*.tgz
 
-# report.sh pins pkdiff's download of <name>@latest to the npm registry.
+# install-pkdiff.sh installs from the lockfile, without install scripts, from
+# the npm registry, into a new directory: a file left there doesn't survive.
+PKDIFF_DIR="$WORK/pkdiff"
+mkdir -p "$PKDIFF_DIR"
+echo "registry=https://example.invalid/" >"$PKDIFF_DIR/.npmrc"
+: >"$WORK/shim.log"
+set +e
+LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" ACTION_PATH="$ACTION_DIR" PKDIFF_DIR="$PKDIFF_DIR" \
+  "$SCRIPTS/install-pkdiff.sh" 2>&1)"
+STATUS=$?
+set -e
+pkdiff_installed() {
+  ((STATUS == 0)) &&
+    [[ "$(cat "$WORK/shim.log")" == 'npm ci --ignore-scripts --no-audit --no-fund --registry https://registry.npmjs.org [files=package-lock.json package.json ]' ]] &&
+    test -x "$PKDIFF_DIR/node_modules/.bin/pkdiff"
+}
+check "install-pkdiff.sh runs npm ci with --ignore-scripts and --registry in a new directory" pkdiff_installed
+
+# pkdiff's lockfile pins every package to a registry.npmjs.org tarball. It
+# nests pkdiff's dependencies under node_modules/pkdiff, as a global install
+# does (npm install --install-strategy=shallow): pkdiff reads diff2html's files
+# from its own node_modules, and `npm ci` lays packages out as the lockfile
+# does.
+LOG="$(cat "$ACTION_DIR/pkdiff/package-lock.json")"
+lockfile_pinned() {
+  jq --exit-status '
+    .lockfileVersion == 3 and
+    .packages["node_modules/pkdiff/node_modules/diff2html"] != null and
+    ([.packages | to_entries[] | select(.key != "") | .value] as $deps |
+      ($deps | length) > 0 and
+      all($deps[]; (.resolved // "" | startswith("https://registry.npmjs.org/")) and (.integrity // "" | startswith("sha512-"))))
+  ' "$ACTION_DIR/pkdiff/package-lock.json" >/dev/null
+}
+check "pkdiff's lockfile is version 3, nests diff2html and resolves every package to https://registry.npmjs.org/" lockfile_pinned
+
+# report.sh runs the installed pkdiff, not one on PATH, and pins its download
+# of <name>@latest to the npm registry.
 cat >"$SHIMS/pkdiff" <<'EOF'
 #!/usr/bin/env bash
-printf 'pkdiff' >>"$SHIM_LOG"
-printf ' %q' "$@" >>"$SHIM_LOG"
-echo >>"$SHIM_LOG"
+echo "pkdiff from PATH" >>"$SHIM_LOG"
 EOF
 chmod +x "$SHIMS/pkdiff"
 mkdir -p "$WORK/report/package"
@@ -339,13 +390,15 @@ echo '{"name": "@test/npm-publish-modes", "version": "1.2.3"}' >"$WORK/report/pa
 tar -czf "$TARBALL" -C "$WORK/report" package
 : >"$WORK/shim.log"
 set +e
-LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" "$SCRIPTS/report.sh" 2>&1)"
+LOG="$(PATH="$SHIMS:$PATH" SHIM_LOG="$WORK/shim.log" PACK_DIR="$PACK_DIR" PKDIFF_DIR="$PKDIFF_DIR" \
+  "$SCRIPTS/report.sh" 2>&1)"
 STATUS=$?
 set -e
 pkdiff_pinned() {
-  ((STATUS == 0)) && grep -q '^pkdiff .* --registry https://registry\.npmjs\.org .*-- ' "$WORK/shim.log"
+  ((STATUS == 0)) && [[ "$(wc -l <"$WORK/shim.log")" -eq 1 ]] &&
+    grep -q '^pkdiff .* --registry https://registry\.npmjs\.org .*-- ' "$WORK/shim.log"
 }
-check "report.sh passes --registry https://registry.npmjs.org to pkdiff" pkdiff_pinned
+check "report.sh runs the installed pkdiff with --registry https://registry.npmjs.org" pkdiff_pinned
 
 rm -f "$TARBALL" "$PACK_DIR"/*.tgz
 if ((failures > 0)); then

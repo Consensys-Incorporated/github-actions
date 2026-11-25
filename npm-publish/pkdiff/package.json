@@ -1,0 +1,7 @@
+{
+  "name": "npm-publish-pkdiff",
+  "private": true,
+  "dependencies": {
+    "pkdiff": "2.0.1"
+  }
+}
