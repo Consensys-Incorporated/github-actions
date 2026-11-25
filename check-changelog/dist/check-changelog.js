@@ -3220,7 +3220,7 @@ async function getChangedPackages(files, workspacePatterns, repoPath, baseRef) {
 async function main(argv) {
   const [repoPath, baseRef, prNumber] = argv;
   if (!repoPath || !baseRef || !prNumber) {
-    throw new Error("Usage: node check-changelog.ts <repo-path> <base-branch> <pr-number>");
+    throw new Error("Usage: node check-changelog.js <repo-path> <base-branch> <pr-number>");
   }
   const fullRepoPath = path.resolve(process.cwd(), repoPath);
   try {
