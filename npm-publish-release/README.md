@@ -17,8 +17,9 @@ Run it after checking out the commit the workflow runs on (`github.sha`), in a j
 `github.sha`) and the tags go on `HEAD`, so the action fails before creating anything if they
 differ.
 
-The action needs only bash, git, jq, `gh` and openssl, which GitHub-hosted runners provide; it
-does not need Node.js or an install. Nothing from the repository may run earlier in the job: no
+The action needs only bash 4.2 or later, git, jq, `gh` and openssl, which GitHub-hosted runners
+provide; it does not need Node.js or an install. On a self-hosted macOS runner, `/bin/bash` is
+3.2: put a newer bash first on `PATH`, or the action fails at its first step. Nothing from the repository may run earlier in the job: no
 install, build or repository script. Such code could change what later steps run, through
 `$GITHUB_ENV` or `$GITHUB_PATH`, or change the files this action reads, while the job holds a
 token with `contents: write`. Build and publish in other jobs.
@@ -53,15 +54,17 @@ It uses `env.GITHUB_TOKEN` if set, otherwise `github.token`.
 | `release-version` | The root `package.json` `version`.   |
 
 The release notes are also exported to later steps of the job as the `RELEASE_NOTES` environment
-variable.
+variable. Linux does not start a process with an environment value over 128 KiB, so the action
+fails before creating anything if the notes are larger (131,057 bytes at most).
 
 ## Behavior
 
 The action reads the working tree, at the root of the repository, but the release is `HEAD`:
 every file it reads (`package.json` files, changelogs, `release.config.json`) must be a regular
 file committed at `HEAD`, with no staged or unstaged changes. In a monorepo, no `package.json`
-committed at `HEAD` may be missing from the working tree. Otherwise it fails before creating
-anything.
+committed at `HEAD` may be missing from the working tree. No file in the index may be marked
+skip-worktree (as a sparse checkout does) or assume-unchanged, since `git diff` would not show how
+the working tree differs from `HEAD`. Otherwise it fails before creating anything.
 
 1. Read the root `package.json`: `version` (must be valid SemVer) and `repository.url` (must be
    `https:` or `git+https:`).
@@ -74,11 +77,16 @@ anything.
      Nested workspaces are followed.
    - A workspace is released if it is not private, its version is not `0.0.0`, and the tag
      `<name>@<version>` does not exist (the lookup returns HTTP 404; any other error fails).
-     At least one package must be released.
+     At least one package must be released, unless the release is already finished: `HEAD` is
+     `release-commit`, and the release `v<version>` and its tag are at that commit. Then nothing
+     is created, and the release's notes are exported as `RELEASE_NOTES`.
    - The notes are a `## <name> <version>` section per released package, in workspace order,
      each followed by the body of its changelog's `## [<version>]` section, which must exist.
-4. Fail if `release-commit` is not a full commit SHA, if `HEAD` is not `release-commit`, or if a
-   `<name>@<version>` tag for a released package already exists locally at another commit.
+4. Fail if `release-commit` is not a full commit SHA, if `HEAD` is not `release-commit`, if a
+   `<name>@<version>` tag for a released package already exists locally at another commit, or
+   if the tag `v<version>` already exists in the repository (following annotated tags) at
+   another commit. GitHub ignores `--target` when that tag exists, so the release would be
+   attached to the tag's commit; this happens when a release is deleted but its tag is not.
 5. Create the release with `gh release create v<version> --title <version> --notes-file …
    --target <release-commit>`. If release `v<version>` already exists with target
    `release-commit`, skip this step and say so in the log; if it exists with another target,
@@ -88,7 +96,8 @@ anything.
    them at another commit.
 
 Because of steps 5 and 6, re-running the action after the release was created but the tag push
-failed creates and pushes the tags without creating the release again.
+failed creates and pushes the tags without creating the release again. Re-running it after the
+release finished, for example to re-run a later failed step, succeeds without creating anything.
 
 A changelog section's body is the lines after its `## [<version>]` heading, up to the next `## `
 heading or the first link reference definition, with blank lines trimmed at both ends.
@@ -102,19 +111,26 @@ heading or the first link reference definition, with blank lines trimmed at both
   blank line after `###` headings. CRLF changelogs are read.
 - An empty changelog section for a released package fails, as an empty root section does.
 - Workspace listing supports `<dir>/*` and literal patterns only, and fails on others instead of
-  globbing them. Workspace names must be valid npm package names, and workspace paths must not
-  contain control characters.
+  globbing them. Workspace names must be valid npm package names, `<name>@<version>` must be a
+  valid Git tag name (checked before anything is created), and workspace paths must not contain
+  control characters.
 - Tag lookups fail on errors other than HTTP 404 instead of treating every error as "not
   released".
 - The notes are passed with `--notes-file` instead of as an argument.
+- Notes over 128 KiB fail before anything is created. Upstream exported them, and every later
+  step failed to start.
 - The action fails before creating anything if `HEAD` is not the release commit. Upstream created
   the release at `github.sha` and tagged `HEAD` regardless. The release commit is the new
   `release-commit` input, which defaults to `github.sha`.
 - An existing release `v<version>` at the release commit is kept instead of failing `gh release
   create`, and existing tags at `HEAD` are kept instead of failing `git tag`, so that a re-run
-  can finish a release whose tag push failed.
-- The action fails if a file it reads is not committed at `HEAD` or has uncommitted changes.
-  Upstream read the working tree as it was.
+  can finish a release whose tag push failed. A monorepo re-run after the release finished
+  succeeds without creating anything; upstream failed with nothing to release.
+- The action fails if the tag `v<version>` already exists at another commit. Upstream created
+  the release anyway, and GitHub attached it to that commit.
+- The action fails if a file it reads is not committed at `HEAD` or has uncommitted changes, or
+  if any file is marked skip-worktree or assume-unchanged (a sparse checkout). Upstream read the
+  working tree as it was.
 - `repository.url` may also be a `git+https:` URL, the form npm normalizes it to.
   Upstream required `https:`.
 - Only the new tags are pushed, by name, instead of `git push --tags`, to `GITHUB_SERVER_URL`
@@ -133,7 +149,11 @@ heading or the first link reference definition, with blank lines trimmed at both
 - Repository text cannot start a workflow command in the log. The release notes are printed
   between `::stop-commands::<random token>` and `::<random token>::`. Names and versions are
   validated before they are printed; other values from the repository are printed with `%`, CR
-  and LF percent-encoded, so they stay on one line. Workspace paths with control characters fail.
+  and LF percent-encoded, so they stay on one line, and in plain log lines also with `#`, `[` and
+  `]` percent-encoded, since the runner reads the older `##[<command>]` form anywhere in a line.
+  Workspace paths with control characters fail. With debug logging (`RUNNER_DEBUG`), the trace of
+  the step that reads the repository, which shows its text with raw newlines, is printed when the
+  step ends, also between stop-commands markers.
 - `RELEASE_NOTES` is exported with a random delimiter, so changelog text cannot end the value
   early or set other variables.
 

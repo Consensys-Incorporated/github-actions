@@ -7,27 +7,54 @@
 # Node.js.
 #
 # Environment:
-#   GH_TOKEN, GITHUB_REPOSITORY: for the tag lookups
+#   GH_TOKEN, GITHUB_REPOSITORY: for the tag and release lookups
+#   RELEASE_COMMIT_ID: the release commit, to recognize a finished release
 #   RELEASE_DIR: directory for notes.md and packages.tsv
 #
-# Outputs (to $GITHUB_OUTPUT): release-version, mode (monorepo|polyrepo)
+# Outputs (to $GITHUB_OUTPUT): release-version, mode (monorepo|polyrepo),
+#   complete (true if a monorepo release is already finished)
 # Exports (to $GITHUB_ENV): RELEASE_NOTES
 # Files: $RELEASE_DIR/notes.md; $RELEASE_DIR/packages.tsv (monorepo:
 #   "<name>\t<path>\t<version>" per released package, in workspace order)
 
 set -euo pipefail
 
-if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
-  set -x
-fi
-
 # shellcheck source=SCRIPTDIR/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 mkdir -p "$RELEASE_DIR"
+
+# print_trace: prints the debug trace with workflow commands stopped.
+print_trace() {
+  local token
+  set +x
+  token="$(openssl rand -hex 16)"
+  echo "Trace:"
+  echo "::stop-commands::$token"
+  cat "$RELEASE_DIR/trace"
+  echo "::$token::"
+}
+
+# The trace shows manifest and changelog text with its raw newlines, so a line
+# of it could run a workflow command. With debug logging it is written to a
+# file and printed when the script exits, with workflow commands stopped.
+if [[ "${RUNNER_DEBUG:-}" == "1" ]]; then
+  exec {trace_fd}>"$RELEASE_DIR/trace"
+  BASH_XTRACEFD="$trace_fd"
+  trap print_trace EXIT
+  set -x
+fi
 notes_file="$RELEASE_DIR/notes.md"
 packages_file="$RELEASE_DIR/packages.tsv"
 : >"$packages_file"
+
+# A sparse checkout marks the files it leaves out skip-worktree, and
+# assume-unchanged hides changes. `git diff` reports neither, so the checks
+# below could not see that the working tree differs from HEAD.
+if git ls-files -v | awk '!/^H / { found = 1 } END { exit !found }'; then
+  echo "::error::Files in the index are marked skip-worktree or assume-unchanged (for example by a sparse checkout), so the working tree cannot be checked against HEAD. Use a full checkout."
+  exit 1
+fi
 
 require_committed package.json
 release_version="$(jq -r '.version // empty' package.json)"
@@ -43,7 +70,7 @@ if [[ "$repository_url" != https://* && "$repository_url" != git+https://* ]]; t
 fi
 repository_url="${repository_url#git+}"
 repository_url="${repository_url%.git}"
-echo "Repository: $(escape_data "$repository_url")"
+echo "Repository: $(escape_log "$repository_url")"
 
 echo "release-version=$release_version" >>"$GITHUB_OUTPUT"
 
@@ -133,19 +160,20 @@ else
       echo "::error::$manifest name '$(escape_data "$name")' is not a valid npm package name."
       exit 1
     fi
+    # Some valid npm names (with "~" or "..", or a scope ending in ".lock")
+    # make tags Git rejects, which would fail only after the release exists.
+    if ! git check-ref-format "refs/tags/$name@$version"; then
+      echo "::error::$manifest: $name@$version is not a valid Git tag name."
+      exit 1
+    fi
 
     if tag_exists "$name@$version"; then
       echo "Skipping $name@$version: already released."
     else
-      echo "Releasing $name@$version ($location)."
+      echo "Releasing $name@$version ($(escape_log "$location"))."
       printf '%s\t%s\t%s\n' "$name" "$location" "$version" >>"$packages_file"
     fi
   done <<<"$workspaces"
-
-  if [[ ! -s "$packages_file" ]]; then
-    echo "::error::No packages to release: every public package's current version is already tagged."
-    exit 1
-  fi
 
   : >"$notes_file"
   first=true
@@ -170,10 +198,49 @@ else
     first=false
     printf '## %s %s\n\n%s\n' "$name" "$version" "$section" >>"$notes_file"
   done <"$packages_file"
+
+  # Every package is tagged already on a re-run after the release finished.
+  # If HEAD is the release commit and the release v<version> and its tag are
+  # there, nothing is left to do: the Create release step is skipped, and the
+  # release's own notes are exported.
+  if [[ ! -s "$packages_file" ]]; then
+    release_tag="v$release_version"
+    error_file="$RELEASE_DIR/gh-error"
+    complete=false
+    if [[ -n "${RELEASE_COMMIT_ID:-}" && "$(git rev-parse HEAD)" == "$RELEASE_COMMIT_ID" ]]; then
+      tag_commit="$(remote_tag_commit "$release_tag" "$error_file")"
+      if [[ "$tag_commit" == "$RELEASE_COMMIT_ID" ]]; then
+        if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" --jq .body >"$notes_file" 2>"$error_file"; then
+          complete=true
+        elif ! grep -qF "HTTP 404" "$error_file"; then
+          echo "::error::Could not look up release $release_tag: $(escape_data "$(cat "$error_file")")"
+          exit 1
+        fi
+      fi
+    fi
+    if [[ "$complete" == false ]]; then
+      echo "::error::No packages to release: every public package's current version is already tagged."
+      exit 1
+    fi
+    echo "Release $release_tag and every package's tag already exist at $RELEASE_COMMIT_ID: nothing to create."
+    echo "complete=true" >>"$GITHUB_OUTPUT"
+  fi
 fi
 
 if [[ -z "$(tr -d '[:space:]' <"$notes_file")" ]]; then
   echo "::error::The release notes are empty."
+  exit 1
+fi
+
+# RELEASE_NOTES reaches the environment of every later step, and Linux does
+# not start a process with an environment string over 131072 bytes, counting
+# "RELEASE_NOTES=" and a NUL. The value is the file without its last newline.
+notes_bytes="$(wc -c <"$notes_file" | tr -d ' ')"
+if [[ -z "$(tail -c 1 "$notes_file")" ]]; then
+  notes_bytes=$((notes_bytes - 1))
+fi
+if ((notes_bytes > 131072 - 15)); then
+  echo "::error::The release notes are $notes_bytes bytes. They are exported as RELEASE_NOTES, and Linux does not start a process with an environment value over 128 KiB, so every later step of the job would fail."
   exit 1
 fi
 

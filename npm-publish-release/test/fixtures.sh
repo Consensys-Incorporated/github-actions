@@ -38,11 +38,13 @@ pass() {
 }
 
 # install_shims <dir>: writes gh and git shims into <dir>.
-#   gh: logs to $SHIM_LOG; answers tag lookups from $EXISTING_TAGS (one tag
-#       per line; "!error" makes every lookup fail with HTTP 500); records the
-#       notes of `gh release create` in $SHIM_LOG.notes; answers release
-#       lookups from $EXISTING_RELEASES ("<tag> <target>" per line; "!error"
-#       makes every lookup fail with HTTP 500), if the file exists.
+#   gh: logs to $SHIM_LOG; answers tag lookups from $EXISTING_TAGS ("<tag>
+#       [<commit> [<annotated tag object>]]" per line, the commit defaulting
+#       to zeros; "!error" makes every lookup fail with HTTP 500), if the file
+#       exists; records the notes of `gh release create` in $SHIM_LOG.notes;
+#       answers release lookups from $EXISTING_RELEASES ("<tag> <target>" per
+#       line; "!error" makes every lookup fail with HTTP 500), if the file
+#       exists, printing the target, or "Notes of <tag>" for `--jq .body`.
 #   git: logs and swallows `git push`; passes everything else to the real git.
 install_shims() {
   local dir="$1" real_git
@@ -56,11 +58,28 @@ printf ' %q' "$@" >>"$SHIM_LOG"
 printf '\n' >>"$SHIM_LOG"
 if [[ "$1" == "api" && "$2" == repos/*/git/ref/tags/* ]]; then
   tag="${2#repos/*/git/ref/tags/}"
-  if grep -qxF '!error' "$EXISTING_TAGS"; then
+  if [[ -f "${EXISTING_TAGS:-}" ]] && grep -qxF '!error' "$EXISTING_TAGS"; then
     echo "gh: Server Error (HTTP 500)" >&2
     exit 1
   fi
-  if grep -qxF -- "$tag" "$EXISTING_TAGS"; then
+  if [[ -f "${EXISTING_TAGS:-}" ]] && line="$(awk -v tag="$tag" '$1 == tag { print; found = 1; exit } END { exit !found }' "$EXISTING_TAGS")"; then
+    read -r _ commit object <<<"$line"
+    if [[ " $* " != *" --silent "* ]]; then
+      if [[ -n "$object" ]]; then
+        printf '{"ref":"refs/tags/%s","object":{"type":"tag","sha":"%s"}}\n' "$tag" "$object"
+      else
+        printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%s"}}\n' "$tag" "${commit:-0000000000000000000000000000000000000000}"
+      fi
+    fi
+    exit 0
+  fi
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+fi
+if [[ "$1" == "api" && "$2" == repos/*/git/tags/* ]]; then
+  object="${2#repos/*/git/tags/}"
+  if [[ -f "${EXISTING_TAGS:-}" ]] && commit="$(awk -v object="$object" '$3 == object { print $2; found = 1; exit } END { exit !found }' "$EXISTING_TAGS")"; then
+    printf '{"sha":"%s","object":{"type":"commit","sha":"%s"}}\n' "$object" "$commit"
     exit 0
   fi
   echo "gh: Not Found (HTTP 404)" >&2
@@ -73,7 +92,11 @@ if [[ "$1" == "api" && "$2" == repos/*/releases/tags/* ]]; then
     exit 1
   fi
   if [[ -f "${EXISTING_RELEASES:-}" ]] && target="$(awk -v tag="$tag" '$1 == tag { print $2; found = 1 } END { exit !found }' "$EXISTING_RELEASES")"; then
-    echo "$target"
+    if [[ " $* " == *" .body "* ]]; then
+      echo "Notes of $tag"
+    else
+      echo "$target"
+    fi
     exit 0
   fi
   echo "gh: Not Found (HTTP 404)" >&2
@@ -188,6 +211,7 @@ run_prepare() {
   : >"$dir.out/shim.log"
   set +e
   PREPARE_LOG="$(cd "$dir" && PATH="$WORK/shims:$PATH" SHIM_LOG="$dir.out/shim.log" EXISTING_TAGS="$tags" \
+    EXISTING_RELEASES="$dir.existing-releases" \
     GITHUB_OUTPUT="$dir.out/github_output" GITHUB_ENV="$dir.out/github_env" RELEASE_DIR="$dir.out/release" \
     "$SCRIPTS/prepare-release.sh" 2>&1)"
   PREPARE_STATUS=$?
@@ -204,7 +228,7 @@ run_create() {
   fi
   set +e
   CREATE_LOG="$(cd "$dir" && PATH="$WORK/shims:$PATH" SHIM_LOG="$dir.out/shim.log" GH_TOKEN=token \
-    EXISTING_RELEASES="$dir.existing-releases" \
+    EXISTING_TAGS="$dir.existing-tags" EXISTING_RELEASES="$dir.existing-releases" \
     RELEASE_COMMIT_ID="$commit" RELEASE_VERSION="$version" RELEASE_MODE="$mode" \
     RELEASE_DIR="$dir.out/release" "$SCRIPTS/create-release.sh" 2>&1)"
   CREATE_STATUS=$?
@@ -223,14 +247,15 @@ env_value() {
 
 # workflow_commands <log>: prints the lines of <log> that the runner would
 # run as workflow commands. The runner splits output at CR as well as LF,
-# ignores leading whitespace, and runs nothing between ::stop-commands::<token>
-# and ::<token>::.
+# ignores leading whitespace, reads "::<command>::" at the start of a line and
+# the older "##[<command>]" anywhere in it, and runs nothing between
+# ::stop-commands::<token> and ::<token>::.
 workflow_commands() {
   tr '\r' '\n' <<<"$1" | awk '
     { sub(/^[[:space:]]+/, "") }
     stop != "" { if ($0 == "::" stop "::") stop = ""; next }
     /^::stop-commands::/ { stop = substr($0, 18); next }
-    /^(::|##\[)/ { print }
+    /^::/ || index($0, "##[") { print }
   '
 }
 
@@ -244,6 +269,21 @@ expect_prepare_failure() {
 }
 
 install_shims "$WORK/shims"
+
+# --- bash_version_supported --------------------------------------------------
+
+test_bash_version() {
+  local ok=true
+  bash_version_supported 3 2 && ok=false
+  bash_version_supported 4 1 && ok=false
+  bash_version_supported 4 2 || ok=false
+  bash_version_supported 5 0 || ok=false
+  if [[ "$ok" == true ]]; then
+    pass "bash_version_supported: 4.2 or later"
+  else
+    fail "bash_version_supported: 4.2 or later"
+  fi
+}
 
 # --- changelog_section -------------------------------------------------------
 
@@ -450,6 +490,40 @@ test_nothing_to_release() {
   expect_prepare_failure "no released packages fails" "No packages to release"
 }
 
+# A re-run after the release finished: every package is tagged, and the
+# release v3.0.0 and its tag are at the release commit, so there is nothing to
+# do. The release's notes are exported, and the Create step is skipped.
+test_rerun_complete() {
+  local dir="$WORK/rerun-complete" sha
+  (monorepo_fixture "$dir")
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" "v3.0.0 $sha" >"$dir.existing-tags"
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  if ((PREPARE_STATUS == 0)) && grep -qx 'complete=true' "$dir.out/github_output" &&
+    [[ "$(env_value "$dir.out/github_env" RELEASE_NOTES)" == "Notes of v3.0.0" ]]; then
+    pass "re-run after a finished release succeeds without creating anything"
+  else
+    fail "re-run after a finished release" "status $PREPARE_STATUS" "$PREPARE_LOG" "$(cat "$dir.out/github_output")"
+  fi
+
+  # Not finished: the release tag is elsewhere, the release does not exist,
+  # or HEAD is not the release commit.
+  printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" "v3.0.0 0123456789abcdef0123456789abcdef01234567" >"$dir.existing-tags"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "re-run: release tag at another commit still fails" "No packages to release"
+
+  printf '%s\n' "@octo/a@1.1.0" "@octo/b@2.0.0" "@octo/c@1.0.0" "v3.0.0 $sha" >"$dir.existing-tags"
+  rm "$dir.existing-releases"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "re-run: release tag without a release still fails" "No packages to release"
+
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  git -C "$dir" commit -q --allow-empty -m "After the release"
+  RELEASE_COMMIT_ID="$sha" run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "re-run: HEAD other than the release commit still fails" "No packages to release"
+}
+
 test_lookup_error() {
   local dir="$WORK/lookup-error"
   (monorepo_fixture "$dir")
@@ -499,6 +573,33 @@ test_config_errors() {
   run_prepare "$dir" "$dir.existing-tags"
   expect_prepare_failure "invalid package name fails" "is not a valid npm package name"
 
+  # Valid npm names that Git does not accept in a tag name.
+  local i=0 name
+  for name in '@octo/a~x' '@octo/a..b' '@x.lock/y'; do
+    i=$((i + 1))
+    dir="$WORK/bad-ref-name-$i"
+    (monorepo_fixture "$dir" && pkg packages/a "$name" 1.1.0 && commit_changes)
+    run_prepare "$dir" "$dir.existing-tags"
+    expect_prepare_failure "package name $name that is not a valid Git tag name fails" \
+      "$name@1.1.0 is not a valid Git tag name"
+  done
+
+  # Linux does not start a process with an environment value over 128 KiB, so
+  # RELEASE_NOTES that large would break every later step.
+  dir="$WORK/large-notes"
+  (
+    monorepo_fixture "$dir"
+    changelog packages/a/CHANGELOG.md 1.1.0 "$(awk 'BEGIN { for (i = 0; i < 3000; i++) printf "- Entry %04d with some text to make the line longer\n", i }')" 1.0.0 '- Initial release'
+    commit_changes
+  )
+  run_prepare "$dir" "$dir.existing-tags"
+  expect_prepare_failure "release notes over 128 KiB fail" "are exported as RELEASE_NOTES"
+  if [[ -s "$dir.out/github_env" ]]; then
+    fail "release notes over 128 KiB: nothing exported"
+  else
+    pass "release notes over 128 KiB: nothing exported"
+  fi
+
   dir="$WORK/empty-section"
   (monorepo_fixture "$dir" && printf '## [Unreleased]\n\n## [2.0.0]\n\n## [1.0.0]\n\n- Initial release\n' >packages/b/CHANGELOG.md && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
@@ -528,6 +629,25 @@ test_workflow_commands() {
     fail "workflow commands: none from release notes or the repository URL" "status $PREPARE_STATUS" "commands: $commands" "$PREPARE_LOG"
   fi
 
+  # "##[" anywhere in a printed value: a repository URL that would stop
+  # commands with a token the changelog then resumes, and a workspace path.
+  dir="$WORK/commands-legacy"
+  (
+    monorepo_fixture "$dir"
+    jq '.repository.url = "https://github.com/octo/repo##[stop-commands]zz123456"' package.json >p && mv p package.json
+    changelog packages/a/CHANGELOG.md 1.1.0 $'- Entry\n::zz123456::\n::warning::after the resume' 1.0.0 '- Initial release'
+    pkg 'packages/##[add-mask]x' @octo/x 1.0.0
+    changelog 'packages/##[add-mask]x/CHANGELOG.md' 1.0.0 '- Initial release'
+    commit_changes
+  )
+  run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS == 0)) && [[ -z "$commands" ]] && grep -qF 'Releasing @octo/x@1.0.0 (packages/' <<<"$PREPARE_LOG"; then
+    pass "workflow commands: none from ##[ in the repository URL or a workspace path"
+  else
+    fail "workflow commands: none from ##[ in the repository URL or a workspace path" "status $PREPARE_STATUS" "commands: $commands" "$PREPARE_LOG"
+  fi
+
   dir="$WORK/commands-error"
   (monorepo_fixture "$dir" && root_manifest $'3.0\n::warning::from the version' && commit_changes)
   run_prepare "$dir" "$dir.existing-tags"
@@ -546,6 +666,24 @@ test_workflow_commands() {
     pass "workflow commands: workspace paths with control characters fail"
   else
     fail "workflow commands: workspace paths with control characters fail" "status $PREPARE_STATUS" "commands: $commands"
+  fi
+}
+
+# With debug logging (RUNNER_DEBUG=1), the trace shows changelog text with its
+# raw newlines, so it must not reach the log where the runner reads commands.
+test_debug_trace() {
+  local dir="$WORK/debug-trace" commands
+  (
+    monorepo_fixture "$dir"
+    changelog packages/a/CHANGELOG.md 1.1.0 $'- Entry\n::warning::from a line\n##[warning]legacy' 1.0.0 '- Initial release'
+    commit_changes
+  )
+  RUNNER_DEBUG=1 run_prepare "$dir" "$dir.existing-tags"
+  commands="$(workflow_commands "$PREPARE_LOG")"
+  if ((PREPARE_STATUS == 0)) && [[ -z "$commands" ]] && grep -qF 'changelog_section packages/a/CHANGELOG.md 1.1.0' <<<"$PREPARE_LOG"; then
+    pass "debug trace: no workflow commands from release notes, trace still printed"
+  else
+    fail "debug trace: no workflow commands from release notes, trace still printed" "status $PREPARE_STATUS" "commands: $commands"
   fi
 }
 
@@ -598,6 +736,22 @@ test_uncommitted() {
   (monorepo_fixture "$dir" && mv packages/b "$dir.b")
   expect_uncommitted_failure "workspace missing from the working tree fails" "$dir" \
     "package.json files committed at HEAD are missing from the working tree."
+
+  # Sparse checkout marks the files it leaves out skip-worktree, and
+  # assume-unchanged hides changes, so neither shows up in `git diff`.
+  dir="$WORK/sparse-checkout"
+  (monorepo_fixture "$dir" && git sparse-checkout set --no-cone '/*' '!/packages/b/')
+  expect_uncommitted_failure "workspace left out by a sparse checkout fails" "$dir" \
+    "marked skip-worktree or assume-unchanged"
+
+  dir="$WORK/assume-unchanged"
+  (
+    monorepo_fixture "$dir"
+    git update-index --assume-unchanged packages/b/CHANGELOG.md
+    changelog packages/b/CHANGELOG.md 2.0.0 '- Not in HEAD' 1.0.0 '- Initial release'
+  )
+  expect_uncommitted_failure "file marked assume-unchanged fails" "$dir" \
+    "marked skip-worktree or assume-unchanged"
 
   dir="$WORK/symlinked-manifest"
   (
@@ -712,6 +866,78 @@ test_rerun_conflicts() {
   fi
 }
 
+# expect_release_tag_conflict <name> <dir>: runs create-release.sh in <dir>
+# and expects it to fail on the tag v3.0.0 at another commit before creating
+# or pushing anything.
+expect_release_tag_conflict() {
+  local test_name="$1" dir="$2"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0
+  if ((CREATE_STATUS != 0)) && grep -qF "Tag v3.0.0 already exists at 0123456789abcdef0123456789abcdef01234567, not at the release commit" <<<"$CREATE_LOG" &&
+    ! grep -q '^gh release create\|^git push' "$dir.out/shim.log" && [[ -z "$(git -C "$dir" tag)" ]]; then
+    pass "$test_name"
+  else
+    fail "$test_name" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+}
+
+# A tag v<version> at another commit, as deleting a release in the UI leaves
+# behind: GitHub ignores --target when the tag exists, so the release would be
+# attached to that commit while the package tags go on HEAD.
+test_release_tag() {
+  local dir sha
+
+  dir="$WORK/release-tag-elsewhere"
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 0123456789abcdef0123456789abcdef01234567" >>"$dir.existing-tags"
+  expect_release_tag_conflict "release tag at another commit fails" "$dir"
+
+  dir="$WORK/release-tag-annotated-elsewhere"
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 0123456789abcdef0123456789abcdef01234567 fedcba9876543210fedcba9876543210fedcba98" >>"$dir.existing-tags"
+  expect_release_tag_conflict "annotated release tag at another commit fails" "$dir"
+
+  # The release's target_commitish names the release commit, but the tag
+  # says where the release is.
+  dir="$WORK/release-tag-existing-release"
+  (monorepo_fixture "$dir")
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 0123456789abcdef0123456789abcdef01234567" >>"$dir.existing-tags"
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  expect_release_tag_conflict "existing release with its tag at another commit fails" "$dir"
+
+  dir="$WORK/release-tag-here"
+  (monorepo_fixture "$dir")
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  run_prepare "$dir" "$dir.existing-tags"
+  echo "v3.0.0 $sha fedcba9876543210fedcba9876543210fedcba98" >>"$dir.existing-tags"
+  echo "v3.0.0 $sha" >"$dir.existing-releases"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0
+  if ((CREATE_STATUS == 0)) && grep -q '^gh api repos/octo/repo/git/tags/fedcba9876543210fedcba9876543210fedcba98' "$dir.out/shim.log" &&
+    grep -qxF "git push https://x-access-token:token@github.com/octo/repo.git refs/tags/@octo/a@1.1.0 refs/tags/@octo/b@2.0.0" "$dir.out/shim.log"; then
+    pass "annotated release tag at the release commit is accepted"
+  else
+    fail "annotated release tag at the release commit is accepted" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+
+  dir="$WORK/release-tag-lookup-error"
+  (monorepo_fixture "$dir")
+  run_prepare "$dir" "$dir.existing-tags"
+  echo '!error' >"$dir.existing-tags"
+  : >"$dir.out/shim.log"
+  run_create "$dir" monorepo 3.0.0
+  if ((CREATE_STATUS != 0)) && grep -qF "Could not look up tag v3.0.0" <<<"$CREATE_LOG" &&
+    ! grep -q '^gh release create\|^git push' "$dir.out/shim.log"; then
+    pass "release tag lookup error other than 404 fails"
+  else
+    fail "release tag lookup error" "status $CREATE_STATUS" "$CREATE_LOG" "$(cat "$dir.out/shim.log")"
+  fi
+}
+
 test_release_lookup_error() {
   local dir="$WORK/release-lookup-error"
   (monorepo_fixture "$dir")
@@ -762,18 +988,22 @@ test_polyrepo() {
   expect_prepare_failure "polyrepo: missing section fails" "CHANGELOG.md has no section for 1.2.0"
 }
 
+test_bash_version
 test_changelog_section
 test_list_workspaces
 test_monorepo
 test_missing_section
 test_nothing_to_release
+test_rerun_complete
 test_lookup_error
 test_config_errors
 test_workflow_commands
+test_debug_trace
 test_uncommitted
 test_head_mismatch
 test_rerun
 test_rerun_conflicts
+test_release_tag
 test_release_lookup_error
 test_polyrepo
 

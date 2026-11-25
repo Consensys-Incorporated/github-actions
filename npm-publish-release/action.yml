@@ -34,13 +34,16 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ env.GITHUB_TOKEN || github.token }}
+        RELEASE_COMMIT_ID: ${{ inputs.release-commit }}
         RELEASE_DIR: ${{ runner.temp }}/npm-publish-release
         ACTION_PATH: ${{ github.action_path }}
         BASH_ENV: ''
         ENV: ''
       run: '"$ACTION_PATH/scripts/prepare-release.sh"'
 
+    # Skipped on a re-run after the release finished (see prepare-release.sh).
     - name: Create release
+      if: ${{ steps.prepare.outputs.complete != 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ env.GITHUB_TOKEN || github.token }}
