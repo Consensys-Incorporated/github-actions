@@ -9,6 +9,7 @@ The repository cannot run code while publishing.
 
 Ported from [`MetaMask/action-npm-publish`](https://github.com/MetaMask/action-npm-publish) v7
 (MIT; see [NOTICE](NOTICE)). Requires Yarn 4.16 or later.
+The dry run's `pkdiff` report needs npm 7 or later, as shipped with Node 16 and later.
 
 ## Usage
 
