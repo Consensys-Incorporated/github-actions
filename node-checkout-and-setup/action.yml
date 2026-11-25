@@ -1,0 +1,262 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'node-checkout-and-setup'
+description: 'Check out the repository if needed, set up Node.js and Corepack, and run `yarn --immutable`, with an optional node_modules cache.'
+
+inputs:
+  is-high-risk-environment:
+    description: >-
+      Required. `true` for jobs that hold write tokens or publish credentials:
+      no Actions cache is read or written. `false` enables caching.
+    required: true
+  node-version:
+    description: >-
+      Node.js version (e.g. `24.x`, `24`, `v24.13.0`, `lts/*`). Defaults to
+      the contents of `.nvmrc`: the workspace's own if it is already a git
+      repository (the action fails if it has none), otherwise the one at
+      `ref`.
+    required: false
+    default: ''
+  cache-node-modules:
+    description: >-
+      Save node_modules to the cache after installing, and skip setup entirely
+      when the cache already holds an entry for this lockfile. Meant for a
+      "prepare" job that warms the cache for the rest of the run. Only allowed
+      when `is-high-risk-environment` is `false`.
+    required: false
+    default: 'false'
+  ref:
+    description: >-
+      Branch, tag or SHA to check out. Defaults to the commit that triggered
+      the workflow. No effect, with a warning, if the workspace is already a
+      git repository: it is not checked out and nothing is downloaded from
+      it.
+    required: false
+    default: ''
+  persist-credentials:
+    description: >-
+      Passed to `actions/checkout`. Set to `true` only if later steps use the
+      job token from `.git/config` (e.g. to push). Has no effect, with a
+      warning, if the workspace is already a git repository.
+    required: false
+    default: 'false'
+  skip-install:
+    description: 'Check out and set up Node.js only. No Yarn command runs, and no cache is used.'
+    required: false
+    default: 'false'
+  skip-allow-scripts:
+    description: 'Do not run `yarn allow-scripts` after restoring node_modules from the cache.'
+    required: false
+    default: 'false'
+  force-setup:
+    description: >-
+      With `cache-node-modules: true`, do not skip setup on a cache hit. Use
+      this when later steps in the same job need a prepared workspace.
+    required: false
+    default: 'false'
+
+outputs:
+  node-modules-cache-hit:
+    description: '`true` if node_modules was restored from, or found in, the cache; `false` otherwise.'
+    value: ${{ steps.restore-node-modules.outputs.cache-hit == 'true' || steps.try-skip-setup.outputs.cache-hit == 'true' }}
+  skipped-setup:
+    description: '`true` if checkout, Node.js setup and install were skipped because the cache already holds node_modules; `false` otherwise.'
+    value: ${{ steps.try-skip-setup.outputs.cache-hit == 'true' }}
+  node-version:
+    description: 'The Node.js version that was set up (e.g. `v24.13.0`); empty if setup was skipped.'
+    value: ${{ steps.setup-node.outputs.node-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        IS_HIGH_RISK_ENVIRONMENT: ${{ inputs.is-high-risk-environment }}
+        CACHE_NODE_MODULES: ${{ inputs.cache-node-modules }}
+        PERSIST_CREDENTIALS: ${{ inputs.persist-credentials }}
+        SKIP_INSTALL: ${{ inputs.skip-install }}
+        SKIP_ALLOW_SCRIPTS: ${{ inputs.skip-allow-scripts }}
+        FORCE_SETUP: ${{ inputs.force-setup }}
+      run: |
+        for input in CACHE_NODE_MODULES PERSIST_CREDENTIALS SKIP_INSTALL SKIP_ALLOW_SCRIPTS FORCE_SETUP; do
+          if [[ "${!input}" != "true" && "${!input}" != "false" ]]; then
+            name="$(tr '[:upper:]_' '[:lower:]-' <<<"$input")"
+            echo "::error::'$name' must be 'true' or 'false', got '${!input}'."
+            exit 1
+          fi
+        done
+        if [[ "$IS_HIGH_RISK_ENVIRONMENT" == "true" ]]; then
+          if [[ "$CACHE_NODE_MODULES" == "true" ]]; then
+            echo "::error::'cache-node-modules: true' is not allowed when 'is-high-risk-environment' is 'true'. High-risk jobs never use the Actions cache."
+            exit 1
+          fi
+          echo 'High-risk environment: all caching disabled.'
+        elif [[ "$IS_HIGH_RISK_ENVIRONMENT" == "false" ]]; then
+          echo 'Low-risk environment: caching enabled.'
+        else
+          echo "::error::'is-high-risk-environment' must be 'true' (no cache) or 'false' (cache enabled)."
+          exit 1
+        fi
+
+    - name: Download repository metadata
+      id: download-metadata
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        IS_HIGH_RISK_ENVIRONMENT: ${{ inputs.is-high-risk-environment }}
+        CACHE_NODE_MODULES: ${{ inputs.cache-node-modules }}
+        SKIP_INSTALL: ${{ inputs.skip-install }}
+        INPUT_NODE_VERSION: ${{ inputs.node-version }}
+        OWNER_AND_REPO: ${{ github.repository }}
+        COMMIT_HASH: ${{ inputs.ref || github.sha }}
+        REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+        METADATA_DIR: ${{ runner.temp }}/node-checkout-and-setup-metadata
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/download-metadata.sh"'
+
+    - name: Compute Node.js version
+      id: compute-node-version
+      shell: bash
+      env:
+        INPUT_NODE_VERSION: ${{ inputs.node-version }}
+        NVMRC_FILE: ${{ steps.download-metadata.outputs.nvmrc-path }}
+        NODE_INDEX_FILE: ${{ runner.temp }}/node-release-index.json
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/compute-node-version.sh"'
+
+    - name: Compute node_modules cache paths
+      id: compute-cache-paths
+      if: ${{ inputs.is-high-risk-environment == 'false' && inputs.skip-install != 'true' }}
+      shell: bash
+      env:
+        PACKAGE_JSON_FILE: ${{ steps.download-metadata.outputs.package-json-path }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/compute-cache-paths.sh"'
+
+    - name: Skip setup if node_modules is already cached
+      id: try-skip-setup
+      if: ${{ inputs.is-high-risk-environment == 'false' && inputs.cache-node-modules == 'true' && steps.download-metadata.outputs.yarn-lock-available == 'true' && inputs.force-setup != 'true' && inputs.skip-install != 'true' }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.compute-cache-paths.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
+        lookup-only: true
+
+    # A workspace that is already a git repository (has .git) is not checked
+    # out again. download-metadata.sh decides this; no step between it and the
+    # checkout creates .git. Not hashFiles('.git'), which hashes every file
+    # under .git and returns '' for an empty .git directory.
+    - name: Warn about checkout inputs that have no effect
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.download-metadata.outputs.checked-out == 'true' }}
+      shell: bash
+      env:
+        INPUT_REF: ${{ inputs.ref }}
+        PERSIST_CREDENTIALS: ${{ inputs.persist-credentials }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/warn-ignored-checkout-inputs.sh"'
+
+    - name: Check out repository
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.download-metadata.outputs.checked-out != 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        fetch-depth: 1
+        ref: ${{ inputs.ref }}
+        persist-credentials: ${{ inputs.persist-credentials }}
+
+    # Without a lockfile, the cache keys below would end in an empty hash and
+    # match other entries by prefix. Without a root package.json, Corepack
+    # would run its default Yarn rather than the project's.
+    - name: Require yarn.lock and package.json
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      shell: bash
+      run: |
+        for file in yarn.lock package.json; do
+          if [[ ! -f "$file" ]]; then
+            echo "::error::No $file in the workspace root. Set skip-install to true to only set up Node.js."
+            exit 1
+          fi
+        done
+
+    - name: Resolve Node.js release
+      id: resolve-node-version
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      shell: bash
+      env:
+        COMPUTED_NODE_VERSION: ${{ steps.compute-node-version.outputs.node-version }}
+        NODE_INDEX_FILE: ${{ runner.temp }}/node-release-index.json
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/resolve-node-version.sh"'
+
+    # package-manager-cache is off so that no cache is used here regardless of
+    # what the repository's package.json declares.
+    - name: Set up Node.js
+      id: setup-node
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: ${{ steps.resolve-node-version.outputs.node-version }}
+        package-manager-cache: false
+
+    - name: Enable Corepack
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' }}
+      shell: bash
+      env:
+        NODE_VERSION: ${{ steps.setup-node.outputs.node-version }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        echo "Using Node.js $NODE_VERSION"
+        # Node.js 25 and later don't ship Corepack. Install it next to the
+        # selected Node.js rather than use whichever one the runner has.
+        node_bin="$(dirname "$(command -v node)")"
+        if [[ ! -x "$node_bin/corepack" ]]; then
+          "$ACTION_PATH/scripts/retry.sh" npm install --global --ignore-scripts corepack@0.36.0
+        fi
+        "$node_bin/corepack" enable
+
+    - name: Restore node_modules from cache
+      id: restore-node-modules
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && inputs.skip-install != 'true' }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.compute-cache-paths.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}
+
+    # On a node_modules cache miss, restore Yarn's download cache instead.
+    # Low-risk only.
+    - name: Restore Yarn cache
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: ${{ steps.setup-node.outputs.node-version }}
+        cache: yarn
+
+    - name: Install dependencies
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: '"$ACTION_PATH/scripts/retry.sh" yarn --immutable'
+
+    # The install above runs allow-scripts itself; after a cache restore it has
+    # to run separately.
+    - name: Run allow-scripts
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && steps.restore-node-modules.outputs.cache-hit == 'true' && inputs.skip-allow-scripts != 'true' && inputs.skip-install != 'true' }}
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        # Not `yarn bin`: Yarn's first run downloads Yarn, and a failed
+        # download would read as "not installed".
+        if [[ -x node_modules/.bin/allow-scripts ]]; then
+          "$ACTION_PATH/scripts/retry.sh" yarn allow-scripts
+        else
+          echo 'allow-scripts is not installed; skipping.'
+        fi
+
+    - name: Save node_modules to cache
+      if: ${{ steps.try-skip-setup.outputs.cache-hit != 'true' && inputs.is-high-risk-environment == 'false' && inputs.cache-node-modules == 'true' && steps.restore-node-modules.outputs.cache-hit != 'true' && inputs.skip-install != 'true' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.compute-cache-paths.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.compute-node-version.outputs.node-version }}-${{ hashFiles('yarn.lock') }}

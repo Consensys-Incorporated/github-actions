@@ -1,0 +1,18 @@
+{
+  "name": "node-checkout-and-setup-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@lavamoat/allow-scripts": "^5.1.0",
+    "allow-scripts-marker": "file:./marker"
+  },
+  "packageManager": "yarn@4.18.1",
+  "lavamoat": {
+    "allowScripts": {
+      "allow-scripts-marker#1.0.0": true
+    }
+  }
+}
