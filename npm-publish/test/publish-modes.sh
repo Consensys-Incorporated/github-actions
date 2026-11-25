@@ -380,7 +380,13 @@ check "install-pkdiff.sh runs npm ci with --ignore-scripts, --install-strategy=s
 # does (npm install --install-strategy=shallow): pkdiff reads diff2html's files
 # from its own node_modules, and install-pkdiff.sh runs `npm ci` with
 # --install-strategy=shallow, which keeps the lockfile's layout.
-LOG="$(cat "$ACTION_DIR/pkdiff/package-lock.json")"
+# On failure, the log lists the packages that aren't pinned to the registry.
+LOG="$(jq --raw-output '
+  .packages | to_entries[] | select(.key != "") |
+  select((.value.resolved // "" | startswith("https://registry.npmjs.org/") | not) or
+    (.value.integrity // "" | startswith("sha512-") | not)) |
+  "not pinned: \(.key)"
+' "$ACTION_DIR/pkdiff/package-lock.json")"
 lockfile_pinned() {
   jq --exit-status '
     .lockfileVersion == 3 and
