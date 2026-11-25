@@ -71,10 +71,10 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
 
 ## Differences from upstream
 
-- The check script runs from `${{ github.action_path }}` with Node.js 24's built-in type
-  stripping and `npm ci --ignore-scripts --omit=dev`, instead of checking out `github-tools` and
-  running `yarn` and `ts-node`. The `github-tools-repository` and `github-tools-ref` inputs are
-  removed.
+- The check script runs from `${{ github.action_path }}` as a committed bundle,
+  `dist/check-changelog.js`, with nothing installed at run time, instead of checking out
+  `github-tools` and running `yarn` and `ts-node`. The `github-tools-repository` and
+  `github-tools-ref` inputs are removed.
 - The `head-ref` and `repo` inputs are removed. Callers passed `head-ref: ${{ github.head_ref }}`
   with `repo: ${{ github.repository }}`, and for a pull request from a fork `github.head_ref` is
   the fork's branch name, so the action checked out a branch of that name from the base
@@ -121,10 +121,22 @@ added) starting with `}` that follows a `"devDependencies":` line, and to start 
   refused package `package.json` is logged and the package is treated as public, as for one that
   can't be parsed.
 
+## Implementation
+
+The check script is `scripts/check-changelog.ts`. The action runs `dist/check-changelog.js`, an
+unminified esbuild bundle of the script and the code it uses from its dependencies: `semver` and
+`@metamask/auto-changelog`'s `parseChangelog` (`dist/parse-changelog.js` and the modules it
+imports). The build resolves `@metamask/auto-changelog` to that module instead of the package's
+index, so the bundle contains none of the package's CLI dependencies (`@yarnpkg/core`, Octokit,
+execa, yargs). Nothing is installed at run time; all dependencies are devDependencies, used only
+to build, typecheck and test. The bundled packages' licenses are in `dist/LICENSES.txt`, written
+by the same build.
+
 ## Security
 
-The action installs its own pinned dependencies (`package-lock.json`) at run time, without
-install scripts. It reads, but never runs, code from the pull request. Use it in `pull_request`
+The action installs nothing at run time: it runs the committed bundle (see
+[Implementation](#implementation)), built from the pinned dependencies in `package-lock.json`. It
+reads, but never runs, code from the pull request. Use it in `pull_request`
 workflows with a read-only token, never from `pull_request_target`. The content of a pull request
 from a fork reaches the script, so it is untrusted: this is why the script stops workflow
 commands, refuses symbolic links, lists changed files NUL-separated (`git diff -z`), and the
@@ -140,16 +152,23 @@ cd check-changelog
 npm ci --ignore-scripts
 npm run typecheck
 npm test              # unit tests of the package.json diff analysis
-test/fixtures.sh      # end-to-end runs against fixture git repositories
+npm run build         # rebuilds dist/check-changelog.js and dist/LICENSES.txt
+test/fixtures.sh      # end-to-end runs of dist/check-changelog.js against fixture git repositories
 ```
+
+After changing the script or a dependency, run `npm run build` and commit `dist/`. CI rebuilds
+the bundle and fails if `dist/` differs from what is committed. The fixture tests run the bundle,
+which is what the action ships; `SCRIPT="$PWD/scripts/check-changelog.ts" test/fixtures.sh` runs
+them against the source instead. The unit tests run against the source.
 
 The fixture tests also fail if any output line, split on `\r` as well as `\n`, would be taken as
 a workflow command other than the script's own.
 
-`.github/workflows/test_check-changelog.yml` runs these and, on this repository's own pull
-requests, runs the action to check that the `no-changelog` label skips the checkout and that the
-pull request head (from a fork too) and the base branch are fetched. On `push` and
+`.github/workflows/test_check-changelog.yml` runs these, checks that `dist/` is up to date, and,
+on this repository's own pull requests, runs the action to check that the `no-changelog` label
+skips the checkout and that the pull request head (from a fork too) and the base branch are
+fetched. On `push` and
 `workflow_dispatch` it checks that the action fails without checking anything out. It also checks
 out a merged `Consensys-Incorporated/ocap-kernel` pull request at `refs/pull/1290/head`, as the
-action would in that repository, and runs the script against it. Run against upstream's script, the fixture tests pass or fail the same way except
+action would in that repository, and runs the bundled script against it. Run against upstream's script, the fixture tests pass or fail the same way except
 in the cases covering the differences listed above.

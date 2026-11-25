@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Runs scripts/check-changelog.ts against fixture git repositories and asserts
-# that each passes or fails. Requires the action's dependencies to be
-# installed (npm ci in check-changelog/).
+# Runs the bundled check script, dist/check-changelog.js, against fixture git
+# repositories and asserts that each passes or fails. Needs only Node.js. Set
+# SCRIPT to the absolute path of another script to run that instead, such as
+# scripts/check-changelog.ts (which needs npm ci in check-changelog/).
 #
-# Usage: test/fixtures.sh
+# Usage: [SCRIPT=<path>] test/fixtures.sh
 
 set -euo pipefail
 
 ACTION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT="$ACTION_DIR/scripts/check-changelog.ts"
+SCRIPT="${SCRIPT:-$ACTION_DIR/dist/check-changelog.js}"
 PR=42
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/check-changelog-test.XXXXXX")"
 FAILURES="$WORK/failures"
