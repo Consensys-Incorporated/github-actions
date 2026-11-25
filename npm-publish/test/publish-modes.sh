@@ -398,6 +398,15 @@ lockfile_pinned() {
 }
 check "pkdiff's lockfile is version 3, nests diff2html and resolves every package to https://registry.npmjs.org/" lockfile_pinned
 
+# pkdiff's minimist is overridden from 0.2.1 to 0.2.4, which fixes a
+# prototype-pollution advisory (GHSA-xvch-5gv4-984h).
+LOG="$(jq --compact-output '.packages | with_entries(select(.key | endswith("/minimist")))' "$ACTION_DIR/pkdiff/package-lock.json")"
+minimist_overridden() {
+  jq --exit-status '.packages["node_modules/pkdiff/node_modules/minimist"].version == "0.2.4"' \
+    "$ACTION_DIR/pkdiff/package-lock.json" >/dev/null
+}
+check "pkdiff's lockfile overrides pkdiff's minimist to 0.2.4" minimist_overridden
+
 # report.sh runs the installed pkdiff, not one on PATH, and pins its download
 # of <name>@latest to the npm registry.
 cat >"$SHIMS/pkdiff" <<'EOF'

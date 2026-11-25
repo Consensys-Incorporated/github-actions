@@ -128,13 +128,15 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
   be checked). To update the lockfile, run `npm install --ignore-scripts` in `pkdiff/`, whose
   `.npmrc` sets `install-strategy=shallow`: `pkdiff` reads `diff2html`'s files from its own
   `node_modules`. `npm ci` is run with `--install-strategy=shallow`, which keeps the lockfile's
-  layout whatever `npm_config_install_strategy` the caller's job sets. `report.sh` runs that
-  install's `pkdiff` by path, from `/tmp`, with `--registry https://registry.npmjs.org`, which it
-  passes to the `npm pack` that downloads `<name>@latest`. The lockfile doesn't change that
-  download: `--registry` doesn't override a scope's registry (e.g.
-  `npm_config_@scope:registry` set through `$GITHUB_ENV`), and `pkdiff` has no option that does, so
-  for a scoped package the dry run's diff report can still be made against a tarball from another
-  registry. The report is informational only: nothing is published from it.
+  layout whatever `npm_config_install_strategy` the caller's job sets. `pkdiff/package.json`
+  overrides `pkdiff`'s `minimist` from 0.2.1 to 0.2.4, which fixes a prototype-pollution advisory
+  (GHSA-xvch-5gv4-984h); the override names `minimist@0.2.1`, so that `handlebars`'s `minimist`
+  1.2.8 isn't downgraded with it. `report.sh` runs that install's `pkdiff` by path, from `/tmp`,
+  with `--registry https://registry.npmjs.org`, which it passes to the `npm pack` that downloads
+  `<name>@latest`. The lockfile doesn't change that download: `--registry` doesn't override a
+  scope's registry (e.g. `npm_config_@scope:registry` set through `$GITHUB_ENV`), and `pkdiff` has
+  no option that does, so for a scoped package the dry run's diff report can still be made against a
+  tarball from another registry. The report is informational only: nothing is published from it.
 - Tarballs go to `$RUNNER_TEMP/npm-publish-packages` rather than `/tmp`, so tarballs left by
   other jobs on a reused runner aren't reported or uploaded.
 - An npm lookup error other than "not found" fails the action, so a registry outage can't send an
@@ -193,24 +195,26 @@ directory, or restore the lifecycle scripts it removed from the checkout's manif
 
 `test/publish-modes.sh` tests mode selection with `yarn` and `npm` shims (the `npm` shim fails
 unless `npm view` is pinned to `https://registry.npmjs.org`), that `install-pkdiff.sh` runs
-`npm ci --ignore-scripts --install-strategy=shallow --registry https://registry.npmjs.org` in a
-new directory and fails if `diff2html` isn't nested under `pkdiff` afterwards, that
+`npm ci --ignore-scripts --install-strategy=shallow --registry https://registry.npmjs.org` in a new
+directory and fails if `diff2html` isn't nested under `pkdiff` afterwards, that
 `pkdiff/package-lock.json` is lockfile version 3, nests `pkdiff`'s dependencies under it (`pkdiff`
-reads `diff2html`'s files from its own `node_modules`) and resolves every package to
-`https://registry.npmjs.org/`, that `report.sh` runs the installed `pkdiff`, passes it
-`--registry https://registry.npmjs.org` and fails if it isn't installed, that an invalid `dry-run`
-fails, that invalid names and versions fail without being read as workflow commands, that Yarn's
-output is wrapped in `::stop-commands::`, that `RUNNER_DEBUG` doesn't print the token, and that
-a monorepo's workspaces are handled in Yarn's order and stop at the first failure.
+reads `diff2html`'s files from its own `node_modules`), resolves every package to
+`https://registry.npmjs.org/` and has `pkdiff`'s `minimist` at 0.2.4, that `report.sh` runs the
+installed `pkdiff`, passes it `--registry https://registry.npmjs.org` and fails if it isn't
+installed, that an invalid `dry-run` fails, that invalid names and versions fail without being read
+as workflow commands, that Yarn's output is wrapped in `::stop-commands::`, that `RUNNER_DEBUG`
+doesn't print the token, and that a monorepo's workspaces are handled in Yarn's order and stop at
+the first failure.
 `test/environment-variables.sh` tests that `scripts/environment.sh` unsets every `YARN_*` variable
 except the action's own, and that real Corepack then ignores a `.corepack.env` that allows a URL as
 the `packageManager`. `.github/workflows/test_npm-publish.yml` runs both, and runs the action with
-real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, a dry run that
-writes a `pkdiff` report for a package on npm (with `npm_config_install_strategy=linked` set in
+real Yarn against fixture projects built by `test/make-fixture.sh`: dry runs, a dry run that writes
+a `pkdiff` report for a package on npm (with `npm_config_install_strategy=linked` set in
 `$GITHUB_ENV`), failures without credentials, a foreign registry, old Yarn, an invalid `dry-run`
 (rejected before the sanitize step), a polyrepo, a project whose plugin, `yarnPath`, lifecycle
-scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, as would `BASH_ENV` set in `$GITHUB_ENV`, that a dry run with `npm_config_registry` and a scope's
-registry set to an unreachable host in `$GITHUB_ENV` still looks packages up on, and installs
-`pkdiff` from, `https://registry.npmjs.org`, that `YARN_*` overrides such as
-`YARN_NPM_REGISTRY_SERVER` don't change the configuration the Publish step reads, and that
-`YARN_RC_FILENAME` isn't set in the caller's later steps.
+scripts and `bash`/`jq`/`npm`/`yarn` bins would write marker files, as would `BASH_ENV` set in
+`$GITHUB_ENV`, that a dry run with `npm_config_registry` and a scope's registry set to an
+unreachable host in `$GITHUB_ENV` still looks packages up on, and installs `pkdiff` from,
+`https://registry.npmjs.org`, that `YARN_*` overrides such as `YARN_NPM_REGISTRY_SERVER` don't
+change the configuration the Publish step reads, and that `YARN_RC_FILENAME` isn't set in the
+caller's later steps.
