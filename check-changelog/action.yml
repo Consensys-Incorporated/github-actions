@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+---
+name: 'check-changelog'
+description: >-
+  On a pull request, fail if a public workspace package has user-facing
+  changes but its CHANGELOG.md has no entry linking the pull request, unless
+  the pull request has the `no-changelog` label.
+
+inputs:
+  base-branch:
+    description: 'The branch the pull request targets.'
+    required: false
+    default: main
+  head-ref:
+    description: 'The pull request head ref to check out.'
+    required: true
+  labels:
+    description: 'The pull request labels, as JSON (`toJSON(github.event.pull_request.labels)`).'
+    required: true
+  pr-number:
+    description: 'The pull request number.'
+    required: true
+  repo:
+    description: 'The repository to check (`owner/name`).'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check for no-changelog label
+      id: label-check
+      shell: bash
+      env:
+        PR_LABELS: ${{ inputs.labels }}
+      run: |
+        if jq -e '.[] | select(.name == "no-changelog")' <<<"$PR_LABELS" >/dev/null; then
+          echo "no-changelog label found, skipping changelog check."
+          echo "skip=true" >>"$GITHUB_OUTPUT"
+        else
+          echo "No no-changelog label found, proceeding with check."
+          echo "skip=false" >>"$GITHUB_OUTPUT"
+        fi
+
+    - name: Check out target repository
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: ${{ inputs.repo }}
+        ref: ${{ inputs.head-ref }}
+        path: target-repo
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Set up Node.js
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: 24.x
+        package-manager-cache: false
+
+    - name: Install check dependencies
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
+
+    - name: Check changelog
+      if: ${{ steps.label-check.outputs.skip != 'true' }}
+      shell: bash
+      env:
+        BASE_BRANCH: ${{ inputs.base-branch }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "$ACTION_PATH/scripts/check-changelog.ts" target-repo "$BASE_BRANCH" "$PR_NUMBER"
