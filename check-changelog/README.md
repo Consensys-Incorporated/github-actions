@@ -130,7 +130,9 @@ imports). The build resolves `@metamask/auto-changelog` to that module instead o
 index, so the bundle contains none of the package's CLI dependencies (`@yarnpkg/core`, Octokit,
 execa, yargs). Nothing is installed at run time; all dependencies are devDependencies, used only
 to build, typecheck and test. The bundled packages' licenses are in `dist/LICENSES.txt`, written
-by the same build.
+by the same build. The build fails if the bundle imports anything but `node:` built-ins at run
+time: esbuild leaves an import it can't resolve in the bundle without a warning, and the action
+has no `node_modules` to load it from.
 
 ## Security
 

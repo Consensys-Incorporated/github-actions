@@ -54,6 +54,20 @@ const result = await build({
   logLevel: 'warning',
 });
 
+// esbuild leaves an import it cannot resolve (e.g. a dynamic import in a try
+// block) in the bundle without a warning, and the action has no
+// node_modules at run time, so the bundle may import only Node built-ins.
+const runtimeImports = Object.values(result.metafile.outputs).flatMap(
+  (output) => output.imports,
+);
+const nonBuiltins = runtimeImports.filter(({ path: specifier }) => !specifier.startsWith('node:'));
+if (nonBuiltins.length > 0) {
+  const list = nonBuiltins.map(({ path: specifier, kind }) => `  ${specifier} (${kind})`);
+  throw new Error(
+    `The bundle imports modules other than node: built-ins at run time, which the action cannot load:\n${list.join('\n')}`,
+  );
+}
+
 // The directories of the bundled packages, from the bundle's input paths.
 const packageDirs = new Set<string>();
 for (const input of Object.keys(result.metafile.inputs)) {
